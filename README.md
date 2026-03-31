@@ -36,7 +36,7 @@ Se construyó un bot en Telegram respaldado por un motor asíncrono en Python. A
 El bot guía al usuario paso a paso sin necesidad de memorizar formatos complejos:
 
 1. **Comando inicial:** `/rutina`
-2. **Respuesta del Bot:** Despliega el resumen de los ejercicios planificados para la fecha de hoy (`datetime.now()`) con botones interactivos.
-3. **Acción:** El usuario hace clic en un ejercicio (Ej: *Press con Mancuernas Plano*).
-4. **Ingreso:** El bot solicita las variables. El usuario responde con un CSV simple: `12, 30, 2 series, cierre Q1 buena contracción`.
-5. **Carga:** El sistema localiza las coordenadas exactas y actualiza las celdas específicas en tiempo real.
+2. **Respuesta del Bot:** Despliega el resumen de los ejercicios planificados para hoy con botones interactivos.
+3. **Acción:** El usuario hace clic en un botón (Ej: *✅ Press con Mancuernas Plano*).
+4. **Ingreso de datos:** El usuario responde con un CSV simple: `12, 30, no, cierre Q1 buena técnica` (Reps, Peso, Calentamiento, Obs).
+5. **Carga y Confirmación:** El sistema actualiza Google Sheets y vuelve a mostrar el menú de botones con el ejercicio marcado como completado.
