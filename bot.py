@@ -27,17 +27,24 @@ SELECCIONANDO, INGRESANDO_DATOS = range(2)
 # ==========================================
 
 async def mostrar_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mensaje de bienvenida y rescate si el usuario está perdido."""
+    """Mensaje de bienvenida oficial."""
     mensaje = (
         "🤖 *¡Sistema de Entrenamiento Interactivo!*\n\n"
-        "Ya no necesitas memorizar comandos ni alias extraños.\n\n"
-        "👉 Simplemente toca o escribe: `/rutina` para ver tus ejercicios de hoy y registrarlos con un par de clics."
+        "👉 Toca o escribe: `/rutina` para ver tus ejercicios de hoy y registrarlos con un par de clics."
     )
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
-async def respuesta_corta(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Atrapalotodo cuando el usuario escribe fuera de la rutina."""
-    await update.message.reply_text("⚠️ No estoy esperando datos en este momento.\nToca 👉 `/rutina` para empezar a registrar tu entrenamiento.", parse_mode="Markdown")
+async def educar_usuario(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Atrapalotodo global: Atrapa comandos huérfanos (/cancelar, /heavy) o textos (hola)."""
+    mensaje = "⚠️ *Comando o texto no reconocido.*\n\n👉 Por favor, usa el comando `/rutina` para interactuar con tu planificación."
+    await update.message.reply_text(mensaje, parse_mode="Markdown")
+
+async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Atrapalotodo para botones zombis de sesiones anteriores."""
+    query = update.callback_query
+    # query.answer detiene el circulito de carga en Telegram. show_alert lanza un pop-up.
+    await query.answer("Esta botonera ha expirado ❌", show_alert=True)
+    await query.message.reply_text("⚠️ *Botón Expirado*\nEse menú es antiguo o el bot se reinició. Escribe `/rutina` para generar uno nuevo.", parse_mode="Markdown")
 
 
 # --- INICIO DEL FLUJO DE TRABAJO (MÁQUINA DE ESTADOS) ---
@@ -50,16 +57,19 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         message_obj = update.message
 
-    fecha_actual = datetime.now().strftime("%d/%m/%Y")
-    await message_obj.reply_text(f"⏳ Buscando tu planificación del {fecha_actual}...")
+    # Guardamos la fecha actual matemática para poder comparar después
+    fecha_actual_dt = datetime.now()
+    fecha_actual_str = fecha_actual_dt.strftime("%d/%m/%Y")
+    
+    await message_obj.reply_text(f"⏳ Buscando tu planificación del {fecha_actual_str}...")
 
     try:
         registros = sheet.get_all_values()
         botones = []
-        texto_rutina = f"🏋️‍♂️ *RUTINA DE HOY ({fecha_actual})*\n\n"
+        texto_rutina = f"🏋️‍♂️ *RUTINA DE HOY ({fecha_actual_str})*\n\n"
 
         for i, fila in enumerate(registros):
-            if len(fila) > 2 and fila[0] == fecha_actual:
+            if len(fila) > 2 and fila[0] == fecha_actual_str:
                 ejercicio = fila[2]
                 meta_reps = fila[3] if len(fila) > 3 else "-"
                 meta_peso = fila[7] if len(fila) > 7 else "-"
@@ -73,12 +83,30 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
                 botones.append([InlineKeyboardButton(f"{icono} {ejercicio}", callback_data=str(i))])
 
+        # NUEVA LÓGICA: Si no hay entrenamiento hoy, buscar el próximo
         if not botones:
-            await message_obj.reply_text(f"🤷‍♂️ Descanso. No hay nada planificado para hoy.")
+            proxima_fecha = None
+            for fila in registros:
+                if len(fila) > 0:
+                    try:
+                        # Convertimos el texto del Excel a tiempo matemático
+                        fecha_fila = datetime.strptime(fila[0], "%d/%m/%Y")
+                        # Preguntamos si la fecha de la fila es MAYOR que la de hoy
+                        if fecha_fila.date() > fecha_actual_dt.date():
+                            proxima_fecha = fila[0]
+                            break # Encontramos el más cercano, detenemos la búsqueda
+                    except ValueError:
+                        continue # Si hay una fila vacía o con texto raro en vez de fecha, la ignoramos
+            
+            if proxima_fecha:
+                await message_obj.reply_text(f"🤷‍♂️ Descanso. No hay nada planificado para hoy.\n🗓️ *Tu próximo entrenamiento es el:* {proxima_fecha}", parse_mode="Markdown")
+            else:
+                await message_obj.reply_text(f"🤷‍♂️ Descanso. Y no encontré más entrenamientos en el futuro de tu Excel.")
+                
             return ConversationHandler.END
 
+        # Si hay botones, agregamos el de cancelar y mandamos el menú
         botones.append([InlineKeyboardButton("❌ Finalizar Entrenamiento", callback_data="cancelar")])
-
         reply_markup = InlineKeyboardMarkup(botones)
         await message_obj.reply_text(texto_rutina, reply_markup=reply_markup, parse_mode="Markdown")
         
@@ -106,7 +134,7 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     mensaje = (
         f"📍 Seleccionaste: *{ejercicio}*\n\n"
-        "Escribe tus datos en este orden separados por coma:\n"
+        "Escribe tus datos separados por coma:\n"
         "`Reps, Peso, Calentamiento, Obs`\n\n"
         "*(Ej: 12, 30, 2 series, contracción brutal)*\n\n"
         "✍️ Ingresa los datos ahora (o manda /cancelar para volver atrás):"
@@ -166,25 +194,28 @@ def main():
     token = os.getenv("TELEGRAM_TOKEN")
     app = Application.builder().token(token).build()
 
-    # 1. Primero agregamos la máquina de estados
+    # 1. LA MÁQUINA DE ESTADOS (Lo más importante primero)
     conv_handler = ConversationHandler(
         entry_points=[CommandHandler('rutina', mostrar_rutina)],
         states={
             SELECCIONANDO: [CallbackQueryHandler(boton_tocado)],
             INGRESANDO_DATOS: [MessageHandler(filters.TEXT & ~filters.COMMAND, procesar_datos)]
         },
-        fallbacks=[CommandHandler('cancelar', cancelar_conversacion)]
+        fallbacks=[CommandHandler('cancelar', cancelar_conversacion), CommandHandler('rutina', mostrar_rutina)]
     )
     app.add_handler(conv_handler)
 
-    # 2. LUEGO agregamos los comandos globales para cuando NO estás en medio de una rutina
+    # 2. COMANDOS BÁSICOS 
     app.add_handler(CommandHandler("start", mostrar_ayuda))
     app.add_handler(CommandHandler("ayuda", mostrar_ayuda))
     
-    # 3. Y finalmente el atrapalotodo para textos perdidos (como el "hola")
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, respuesta_corta))
+    # 3. ATRAPALOTODO DE BOTONES ZOMBIS (Debe ir fuera del ConversationHandler)
+    app.add_handler(CallbackQueryHandler(boton_expirado))
 
-    print("🤖 Servidor de Bot interactivo corriendo... ¡Ahora sí, con atrapalotodo!")
+    # 4. ATRAPALOTODO GLOBAL (Mensajes, comandos basura, etc.)
+    app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, educar_usuario))
+
+    print("🤖 Servidor de Bot interactivo corriendo... ¡A prueba de fallos!")
     app.run_polling()
 
 if __name__ == '__main__':
