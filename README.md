@@ -13,14 +13,16 @@ Se construyó un bot en Telegram respaldado por un motor asíncrono en Python al
 Para garantizar disponibilidad 24/7 en la capa gratuita, el bot integra un micro-servidor de "Keep-Alive" monitoreado externamente por **UptimeRobot**.
 
 > *Visualización Ingesta de Datos*
-![Bot Telegram Demo](bot_demo.gif)
+<br>
+<img src="bot_demo.gif" width="250" alt="Bot Telegram Demo">
 
 ## 📊 La Solución (V3 - Capa de Auditoría y BI / Streamlit)
 Para cerrar el ciclo de vida del dato, se construyó un Dashboard Analítico (`dashboard.py`) en **Streamlit Cloud** que actúa como un auditor implacable del rendimiento. Este panel extrae la data de Google Sheets, aplica limpieza avanzada (Regex) para aislar series efectivas y estandarizar nombres (Master Data Management), y calcula el E1RM (1 Repetición Máxima Estimada).
 Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la fatiga del Sistema Nervioso Central (SNC) usando principios de entrenamiento Heavy Duty.
 
 > *Visualización Dashboard Auditoría*
-![Dashboard BI Demo](dashboard_demo.gif)
+<br>
+<img src="dashboard_demo.gif" width="700" alt="Dashboard BI Demo">
 
 ## 🏗️ Arquitectura de Alto Nivel
 
