@@ -11,6 +11,21 @@ import altair as alt
 # ==========================================
 st.set_page_config(page_title="Centro Comando HD", page_icon="💪", layout="wide")
 
+# --- SEGURIDAD Y LOGIN ---
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+
+if not st.session_state["autenticado"]:
+    st.markdown("<h2 style='text-align: center;'>🔒 Acceso Restringido</h2>", unsafe_allow_html=True)
+    pwd = st.text_input("Ingresa la clave de comando:", type="password")
+    if pwd == st.secrets["PASSWORD_MAESTRA"]:
+        st.session_state["autenticado"] = True
+        st.rerun()
+    elif pwd:
+        st.error("Contraseña incorrecta. El SNC te vigila.")
+    st.stop() # Detiene la ejecución del resto del código si no hay login
+# -------------------------
+
 # ==========================================
 # 1. EXTRACT: Conexión a Google Sheets
 # ==========================================
