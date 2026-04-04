@@ -5,6 +5,7 @@ import numpy as np
 import re
 import streamlit as st
 import altair as alt
+import json
 
 # ==========================================
 # CONFIGURACIÓN DE PÁGINA
@@ -27,12 +28,16 @@ if not st.session_state["autenticado"]:
 # -------------------------
 
 # ==========================================
-# 1. EXTRACT: Conexión a Google Sheets
+# 1. EXTRACT: Conexión a Google Sheets (Vía Secrets)
 # ==========================================
 @st.cache_data(ttl=300)
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+    
+    # Extraemos el JSON crudo desde los secretos de Streamlit
+    creds_dict = json.loads(st.secrets["google_credentials"])
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+    
     client = gspread.authorize(creds)
     sheet_id = "1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI"
     sheet = client.open_by_key(sheet_id).worksheet("TESTbot")
@@ -48,17 +53,14 @@ def extract_real_weight(row):
         
     nota = str(row['Notas']).lower()
     
-    # 1. Búsquedas directas innegables
     for prefix in ['peso real:', 'peso real', 'sigo con', 'estoy con']:
         if prefix in nota:
             m = re.search(rf'{prefix}\s*(\d+\.?\d*)', nota)
             if m: return float(m.group(1))
             
-    # 2. Atrapa: "serie con barra recta 20kg", "serie 14x70kg"
     m_serie = re.search(r'serie.*?(\d+\.?\d*)\s*kg', nota)
     if m_serie: return float(m_serie.group(1))
     
-    # 3. Atrapa: "con 16kg"
     m_con = re.search(r'con\s*(\d+\.?\d*)\s*kg', nota)
     if m_con: return float(m_con.group(1))
 
@@ -68,7 +70,6 @@ def extract_real_weight(row):
 def process_data(df):
     df = df[df['Ejercicio'] != ''].copy()
     
-    # --- UNIFICACIÓN DE IDENTIDAD (Alias) ---
     ALIAS_MAP = {
         "Triceps Skull Crushers con Mancuernas": "Extension de Triceps con Mancuernas",
         "Extension de Triceps sobre cabeza": "Extension de Triceps con Mancuerna sobre cabeza",
@@ -79,25 +80,20 @@ def process_data(df):
     df['Fecha'] = pd.to_datetime(df['Fecha'], dayfirst=True, errors='coerce')
     df = df.dropna(subset=['Fecha'])
     
-    # --- JERARQUÍA DE SERIES (S3 > S2 > S1) ---
     for c in ['S1', 'S2', 'S3']: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
     df['Reps_Efectivas'] = np.where(df['S3'] > 0, df['S3'],
                                     np.where(df['S2'] > 0, df['S2'], df['S1']))
     
-    # --- INTELIGENCIA DE DESCARGA GLOBAL ---
-    # Si detecta "descarga" en UNA fila, marca TODO EL DÍA como descarga
     df['Tiene_Descarga'] = df['Notas'].str.contains('descarga', case=False, na=False)
     fechas_descarga = df[df['Tiene_Descarga']]['Fecha'].unique()
     df['Es_Descarga'] = df['Fecha'].isin(fechas_descarga)
     df['Tipo_Sesion'] = np.where(df['Es_Descarga'], '🔄 Descarga', '⚡ Serie Efectiva')
     
-    # --- CÁLCULO DE METAS Y REALIDAD ---
     df['Peso_Proyectado_Num'] = df['Peso Proyectado'].astype(str).str.extract(r'(\d+\.?\d*)').astype(float)
     df['Peso_Real'] = df.apply(extract_real_weight, axis=1)
     
     df['Reps_Min_Meta'] = df['Sets x Reps'].astype(str).str.extract(r'x\s*(\d+)').astype(float).fillna(8)
     
-    # E1RM META vs E1RM REAL
     df['E1RM_Meta'] = df['Peso_Proyectado_Num'] / (1.0278 - (0.0278 * df['Reps_Min_Meta']))
     
     df['E1RM'] = np.where(
@@ -146,7 +142,6 @@ def render_chart_dual(df_ej_real):
     chart_data = df_ej_real.dropna(subset=['E1RM', 'E1RM_Meta']).copy()
     if chart_data.empty: return
     
-    # Añadir espacio al futuro para evitar que el tooltip se corte
     min_date = chart_data['Fecha'].min() - pd.Timedelta(days=2)
     max_date = chart_data['Fecha'].max() + pd.Timedelta(days=5)
     
@@ -154,7 +149,6 @@ def render_chart_dual(df_ej_real):
         x=alt.X('Fecha:T', axis=alt.Axis(format='%d-%m', title='Día-Mes', labelAngle=-45), scale=alt.Scale(domain=[min_date, max_date]))
     )
     
-    # LÍNEA DEL PLAN (Naranja)
     line_meta = base.mark_line(color='#FFA500', size=4).encode(
         y=alt.Y('E1RM_Meta:Q', scale=alt.Scale(zero=False), title='Fuerza (kg)')
     )
@@ -168,7 +162,6 @@ def render_chart_dual(df_ej_real):
         ]
     )
     
-    # LÍNEA DE LA REALIDAD (Celeste)
     line_real = base.mark_line(color='#00FFFF', size=4).encode(y='E1RM:Q')
     points_real = base.mark_point(color='#00FFFF', size=150, filled=True, opacity=0.9).encode(
         y='E1RM:Q',
@@ -180,7 +173,6 @@ def render_chart_dual(df_ej_real):
         ]
     )
     
-    # INTERACTIVO APAGADO para matar el scroll
     chart = alt.layer(line_meta, points_meta, line_real, points_real).resolve_scale(y='shared').properties(height=260).configure_view(strokeWidth=0).interactive(bind_y=False)
     st.altair_chart(chart, use_container_width=True)
 
@@ -250,7 +242,6 @@ st.subheader(f"🎯 CUMPLIMIENTO DE METAS GLOBALES (Bloque Q2 Activo)")
 activos_nombres = [ej for ej, info in status_map.items() if info['activo']]
 df_radar = df_real[df_real['Ejercicio'].isin(activos_nombres)]
 
-# Agrupar ignorando TODAS las descargas
 ultimas_sesiones = df_radar[~df_radar['Es_Descarga']].sort_values('Fecha').groupby('Ejercicio').last()
 
 total_auditados = len(ultimas_sesiones)
