@@ -16,6 +16,7 @@ Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la f
 
 ## 🏗️ Arquitectura de Alto Nivel
 
+```text
 [Usuario / Telegram Mobile] 
        | (JSON API / Webhooks)
        v
@@ -28,6 +29,7 @@ Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la f
        | (Pandas / Regex ETL) -> Limpieza, MDM y Cálculo E1RM
        v
 [Streamlit + Altair Dashboard] ---> Visualización Front-End, Radar SNC y Gráficos Duales
+```
 
 ## 🧠 Características Técnicas Destacadas
 * **Máquina de Estados (ConversationHandler):** Control estricto de la interacción del bot.
