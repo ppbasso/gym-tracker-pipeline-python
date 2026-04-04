@@ -44,11 +44,5 @@ Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la f
 * **Integración Cloud:** Google Cloud Platform (Google Sheets API, `gspread`)
 
 ## 🚀 Guía de Uso Rápido
-El bot guía al usuario paso a paso sin necesidad de memorizar formatos complejos:
-
-1. **Comando inicial:** `/rutina`
-2. **Respuesta del Bot:** Despliega el resumen de los ejercicios planificados para hoy con botones interactivos.
-3. **Acción:** El usuario hace clic en un botón (Ej: *✅ Press con Mancuernas Plano*).
-4. **Ingreso de datos:** El usuario responde con un CSV simple: `12, 30, no, cierre Q1 buena técnica` (Reps, Peso, Calentamiento, Obs).
-5. **Carga y Confirmación:** El sistema actualiza Google Sheets y vuelve a mostrar el menú de botones con el ejercicio marcado como completado.
-6. **Visualización:** Ejecuta `streamlit run dashboard.py` en local (o accede a la URL en Cloud) para auditar el cumplimiento del bloque, la recuperación del SNC y visualizar los gráficos de meta vs realidad.
+1. **Ingesta:** Usa `/rutina` en Telegram. Responde a los botones interactivos con `Reps, Peso, Calentamiento, Obs`.
+2. **Visualización:** Ejecuta `streamlit run dashboard.py` en local (o accede a la URL en Cloud) para auditar el cumplimiento del bloque, la recuperación del SNC y visualizar los gráficos de meta vs realidad.
