@@ -7,30 +7,41 @@ El registro manual de entrenamientos en aplicaciones de notas convencionales gen
 
 Además, registrar datos textualmente en un smartphone durante un entrenamiento físico de alta intensidad genera una alta carga cognitiva y errores tipográficos frecuentes.
 
-## 💡 La Solución (V2 - Arquitectura Interactiva)
+## 💡 La Solución (V2 - Arquitectura Interactiva / Telegram Bot)
 Se construyó un bot en Telegram respaldado por un motor asíncrono en Python. A diferencia de un bot de comandos tradicional, el sistema implementa un **Flujo Conversacional (State Machine)** que lee la planificación dinámica desde la base de datos y despliega **botones interactivos (Inline Keyboards)**. Esto reduce la fricción del usuario a cero, permitiendo registrar la hipertrofia (Peso, Reps, Notas) con clics en lugar de tipeo complejo, y escribiendo mediante lógica UPSERT en la capa transaccional.
+
+## 📊 La Solución (V3 - Capa de Auditoría y BI / Streamlit)
+Para cerrar el ciclo de vida del dato, se construyó un Dashboard Analítico (`dashboard.py`) que actúa como un auditor implacable del rendimiento. Este panel extrae la data de Google Sheets, aplica limpieza avanzada (Regex) para aislar series efectivas y estandarizar nombres (Master Data Management), y calcula el E1RM (1 Repetición Máxima Estimada).
+Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la fatiga del Sistema Nervioso Central (SNC) usando principios de entrenamiento Heavy Duty.
 
 ## 🏗️ Arquitectura de Alto Nivel
 
-[Usuario / Telegram Web] 
+[Usuario / Telegram Mobile] 
        | (JSON API / Webhooks)
        v
-[Python Script (State Machine)] ---> Despliegue de UI Dinámica (Botones)
-       |                             Parsea variables (Reps, Peso, Obs)
-       | (Google OAuth2 / gspread)   Manejo de I/O Asíncrono (async/await)
+[Python Bot (State Machine)] ---> Despliegue UI Dinámica y Parsea Inputs
+       |
+       | (Google OAuth2 / gspread) -> Lógica UPSERT
        v
-[Google Sheets] ---> Lectura (SELECT metas) y Escritura (UPSERT datos reales)
+[Google Sheets (Data Warehouse)] <--- Capa de Almacenamiento Central
+       |
+       | (Pandas / Regex ETL) -> Limpieza, MDM y Cálculo E1RM
+       v
+[Streamlit + Altair Dashboard] ---> Visualización Front-End, Radar SNC y Gráficos Duales
 
 ## 🧠 Características Técnicas Destacadas
-* **Máquina de Estados (ConversationHandler):** Control estricto de la interacción del usuario (Selección -> Ingreso de Datos -> Confirmación), evitando inyecciones de datos erróneos.
-* **Acceso a Datos O(1):** En lugar de iterar bases de datos para buscar ejercicios, los botones generados mapean dinámicamente el `index` de la fila de la hoja de cálculo (`callback_data`), logrando lecturas y escrituras directas y eficientes.
-* **Lógica UPSERT Segura:** El código lee el estado actual de la celda de observaciones antes de escribir, concatenando los nuevos registros de peso y sensaciones sin destruir la planificación histórica ("Cierre Q1").
+* **Máquina de Estados (ConversationHandler):** Control estricto de la interacción del bot.
+* **Acceso a Datos O(1):** Mapeo dinámico del `index` de la fila (`callback_data`) para escrituras directas.
+* **Inteligencia de Datos (MDM & Regex):** El motor ETL resuelve identidades (Alias de ejercicios) y prioriza la serie efectiva pesada (S3 > S2 > S1) ignorando el ruido de los calentamientos.
+* **Lógica de "Descarga Global":** Detección automática de semanas de descanso para evitar falsos positivos en los cálculos de estancamiento.
+* **UI Adaptativa y Accesible:** Gráficos Altair de alto contraste sin interpolaciones confusas, diseñados bajo enfoque Mobile-First.
 
 ## 🛠️ Stack Tecnológico
 * **Lenguaje:** Python 3.10+
-* **Interfaces:** Telegram Bot API (`python-telegram-bot` v20+)
-* **Integración Cloud:** Google Cloud Platform (Google Sheets API, IAM Service Accounts, `gspread`)
-* **Seguridad:** Manejo de variables de entorno (`python-dotenv`) para proteger tokens.
+* **Ingesta:** Telegram Bot API (`python-telegram-bot` v20+)
+* **Procesamiento (ETL):** `pandas`, `numpy`, `re` (Expresiones Regulares)
+* **Visualización:** `streamlit`, `altair`
+* **Integración Cloud:** Google Cloud Platform (Google Sheets API, `gspread`)
 
 ## 🚀 Guía de Uso Rápido
 El bot guía al usuario paso a paso sin necesidad de memorizar formatos complejos:
@@ -40,3 +51,4 @@ El bot guía al usuario paso a paso sin necesidad de memorizar formatos complejo
 3. **Acción:** El usuario hace clic en un botón (Ej: *✅ Press con Mancuernas Plano*).
 4. **Ingreso de datos:** El usuario responde con un CSV simple: `12, 30, no, cierre Q1 buena técnica` (Reps, Peso, Calentamiento, Obs).
 5. **Carga y Confirmación:** El sistema actualiza Google Sheets y vuelve a mostrar el menú de botones con el ejercicio marcado como completado.
+6. **Visualización:** Ejecuta `streamlit run dashboard.py` en local (o accede a la URL en Cloud) para auditar el cumplimiento del bloque, la recuperación del SNC y visualizar los gráficos de meta vs realidad.
