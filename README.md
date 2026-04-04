@@ -8,7 +8,7 @@ El registro manual de entrenamientos en aplicaciones de notas convencionales gen
 Además, registrar datos textualmente en un smartphone durante un entrenamiento físico de alta intensidad genera una alta carga cognitiva y errores tipográficos frecuentes.
 
 ## 💡 La Solución (V2 - Arquitectura Interactiva / Telegram Bot)
-Se construyó un bot en Telegram respaldado por un motor asíncrono en Python. A diferencia de un bot de comandos tradicional, el sistema implementa un **Flujo Conversacional (State Machine)** que lee la planificación dinámica desde la base de datos y despliega **botones interactivos (Inline Keyboards)**. Esto reduce la fricción del usuario a cero, permitiendo registrar la hipertrofia (Peso, Reps, Notas) con clics en lugar de tipeo complejo, y escribiendo mediante lógica UPSERT en la capa transaccional.
+Se construyó un bot en Telegram respaldado por un motor asíncrono en Python. A diferencia de un bot de comandos tradicional, el sistema implementa un **Flujo Conversacional (State Machine)** que lee la planificación dinámica desde la base de datos y despliega **botones interactivos (Inline Keyboards)**. Esto reduce la fricción del usuario a cero, permitiendo registrar la hipertrofia (Peso, Reps, Notas) con clics en lugar de tipeo complejo, y escribiendo mediante **lógica de Update No Destructivo (Append)** en la capa transaccional.
 
 ## 📊 La Solución (V3 - Capa de Auditoría y BI / Streamlit)
 Para cerrar el ciclo de vida del dato, se construyó un Dashboard Analítico (`dashboard.py`) que actúa como un auditor implacable del rendimiento. Este panel extrae la data de Google Sheets, aplica limpieza avanzada (Regex) para aislar series efectivas y estandarizar nombres (Master Data Management), y calcula el E1RM (1 Repetición Máxima Estimada).
@@ -22,7 +22,7 @@ Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la f
        v
 [Python Bot (State Machine)] ---> Despliegue UI Dinámica y Parsea Inputs
        |
-       | (Google OAuth2 / gspread) -> Lógica UPSERT
+       | (Google OAuth2 / gspread) -> Lógica de Append
        v
 [Google Sheets (Data Warehouse)] <--- Capa de Almacenamiento Central
        |
@@ -34,6 +34,7 @@ Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la f
 ## 🧠 Características Técnicas Destacadas
 * **Máquina de Estados (ConversationHandler):** Control estricto de la interacción del bot.
 * **Acceso a Datos O(1):** Mapeo dinámico del `index` de la fila (`callback_data`) para escrituras directas.
+* **Update No Destructivo (Append):** El código lee el estado actual de la celda de observaciones antes de escribir, concatenando los nuevos registros de peso y sensaciones sin destruir el histórico.
 * **Inteligencia de Datos (MDM & Regex):** El motor ETL resuelve identidades (Alias de ejercicios) y prioriza la serie efectiva pesada (S3 > S2 > S1) ignorando el ruido de los calentamientos.
 * **Lógica de "Descarga Global":** Detección automática de semanas de descanso para evitar falsos positivos en los cálculos de estancamiento.
 * **UI Adaptativa y Accesible:** Gráficos Altair de alto contraste sin interpolaciones confusas, diseñados bajo enfoque Mobile-First.
