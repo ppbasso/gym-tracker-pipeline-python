@@ -22,7 +22,7 @@ Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la f
 
 > *Visualización Dashboard Auditoría*
 <br>
-<img src="dashboard_demo.gif" width="700" alt="Dashboard BI Demo">
+<img src="dashboard_demo.gif" width="250" alt="Dashboard BI Demo">
 
 ## 🏗️ Arquitectura de Alto Nivel
 
