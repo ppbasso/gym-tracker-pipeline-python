@@ -6,6 +6,9 @@ import gspread
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 
+# --- LÍNEA AGREGADA 1 (PARA RENDER) ---
+from keep_alive import keep_alive
+
 load_dotenv()
 
 # ==========================================
@@ -214,6 +217,9 @@ def main():
 
     # 4. ATRAPALOTODO GLOBAL (Mensajes, comandos basura, etc.)
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, educar_usuario))
+
+    # --- LÍNEA AGREGADA 2 (PARA RENDER) ---
+    keep_alive()
 
     print("🤖 Servidor de Bot interactivo corriendo... ¡A prueba de fallos!")
     app.run_polling()
