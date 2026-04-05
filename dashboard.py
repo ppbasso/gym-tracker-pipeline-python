@@ -178,7 +178,7 @@ def render_chart_dual(df_ej_real):
     )
     
     chart = alt.layer(line_meta, points_meta, line_real, points_real).resolve_scale(y='shared').properties(height=260).configure_view(strokeWidth=0).interactive(bind_y=False)
-    st.altair_chart(chart, use_container_width=True)
+    st.altair_chart(chart, width="stretch")
 
 def render_ejercicio_bloque(ej, df_g, is_activo=True):
     df_ej = df_g[df_g['Ejercicio'] == ej].copy()
@@ -222,7 +222,7 @@ def render_ejercicio_bloque(ej, df_g, is_activo=True):
         df_disp.columns = ['Fecha', 'Peso Meta', 'Reps Meta', 'Peso Real', 'Reps Reales', 'E1RM Meta', 'E1RM Real', 'Auditoría', '_fecha_sort']
         
         df_disp = df_disp.sort_values(by='_fecha_sort', ascending=False).drop(columns=['_fecha_sort'])
-        st.dataframe(df_disp, hide_index=True, use_container_width=True)
+        st.dataframe(df_disp, hide_index=True, width="stretch")
     st.markdown("<hr style='border:1px dashed #ccc'>", unsafe_allow_html=True)
 
 
