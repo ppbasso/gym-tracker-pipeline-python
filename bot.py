@@ -63,6 +63,7 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Guardamos la fecha actual matemática para poder comparar después
     fecha_actual_dt = datetime.now()
     fecha_actual_str = fecha_actual_dt.strftime("%d/%m/%Y")
+    context.user_data['fecha_actual'] = fecha_actual_str # Guardada para el auto-avance
     
     await message_obj.reply_text(f"⏳ Buscando tu planificación del {fecha_actual_str}...")
 
@@ -70,9 +71,15 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
         registros = sheet.get_all_values()
         botones = []
         texto_rutina = f"🏋️‍♂️ *RUTINA DE HOY ({fecha_actual_str})*\n\n"
+        
+        tiene_entrenamiento_hoy = False
+        todos_hechos = True
+        primer_pendiente_idx = None
+        primer_pendiente_nombre = None
 
         for i, fila in enumerate(registros):
             if len(fila) > 2 and fila[0] == fecha_actual_str:
+                tiene_entrenamiento_hoy = True
                 ejercicio = fila[2]
                 meta_reps = fila[3] if len(fila) > 3 else "-"
                 meta_peso = fila[7] if len(fila) > 7 else "-"
@@ -83,12 +90,17 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ya_hecho = True
                 
                 icono = "✅" if ya_hecho else "⏳"
-                texto_rutina += f"{icono} *{ejercicio}*\n🎯 Meta: {meta_reps} | {meta_peso}\n📝 Notas: {nota_plan}\n\n"
+                # Compresión visual UX: Todo en 2 líneas
+                texto_rutina += f"{icono} *{ejercicio}* 🎯 Meta: {meta_reps} | {meta_peso}\n📝 Notas: {nota_plan}\n\n"
 
-                botones.append([InlineKeyboardButton(f"{icono} {ejercicio}", callback_data=str(i))])
+                # Lógica Linear Stepper: Encontrar el primer vacío
+                if not ya_hecho and primer_pendiente_idx is None:
+                    todos_hechos = False
+                    primer_pendiente_idx = i
+                    primer_pendiente_nombre = ejercicio
 
         # NUEVA LÓGICA: Si no hay entrenamiento hoy, buscar el próximo
-        if not botones:
+        if not tiene_entrenamiento_hoy:
             proxima_fecha = None
             for fila in registros:
                 if len(fila) > 0:
@@ -109,9 +121,13 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
             return ConversationHandler.END
 
-        # Si hay botones, agregamos el de cancelar y mandamos el menú
+        # Si hay rutinas hoy, construimos la botonera de 2 botones máximo
+        if not todos_hechos:
+            botones.append([InlineKeyboardButton(f"▶️ {primer_pendiente_nombre}", callback_data=str(primer_pendiente_idx))])
+        
         botones.append([InlineKeyboardButton("❌ Finalizar Entrenamiento", callback_data="cancelar")])
         reply_markup = InlineKeyboardMarkup(botones)
+        
         await message_obj.reply_text(texto_rutina, reply_markup=reply_markup, parse_mode="Markdown")
         
         return SELECCIONANDO
@@ -142,12 +158,11 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data['ejercicio_actual'] = ejercicio
 
+    # Visión de Túnel (Comprimida)
     mensaje = (
-        f"📍 *EJERCICIO:* {ejercicio}\n\n"
-        f"🎯 *META:* {meta_reps} | {meta_peso}\n"
+        f"📍 *EJERCICIO:* {ejercicio} 🎯 *META:* {meta_reps} | {meta_peso}\n"
         f"📝 *NOTA:* {nota_plan}\n\n"
-        "Escribe tus datos separados por coma:\n"
-        "`Reps, Peso, Calentamiento, Obs`\n\n"
+        "Datos separados por coma: Reps, Peso, Calentamiento, Obs\n"
         "*(Ej: 12, 30, 2 series, contracción brutal)*\n\n"
         "✍️ Ingresa los datos ahora (o manda /cancelar para volver atrás):"
     )
@@ -160,7 +175,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.strip()
 
     if texto.lower() == "/cancelar":
-        await update.message.reply_text("Volviendo a la rutina...")
+        await update.message.reply_text("Volviendo al resumen de rutina...")
         return await mostrar_rutina(update, context)
 
     partes = texto.split(",", 3) 
@@ -188,7 +203,44 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"✅ ¡Guardado perfecto!")
         
-        return await mostrar_rutina(update, context)
+        # --- LÓGICA DE AUTO-AVANCE (LOCMOTORA) ---
+        fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
+        
+        registros = sheet.get_all_values()
+        siguiente_idx = None
+        
+        for i, fila_datos in enumerate(registros):
+            if len(fila_datos) > 2 and fila_datos[0] == fecha_actual_str:
+                ya_hecho = len(fila_datos) > 4 and fila_datos[4].strip() not in ["", "0"]
+                if not ya_hecho:
+                    siguiente_idx = i
+                    break # Encontramos el próximo ejercicio pendiente
+                    
+        if siguiente_idx is not None:
+            # Lanzamos el túnel de visión del siguiente ejercicio
+            fila_datos = registros[siguiente_idx]
+            sig_ejercicio = fila_datos[2]
+            sig_meta_reps = fila_datos[3] if len(fila_datos) > 3 else "-"
+            sig_meta_peso = fila_datos[7] if len(fila_datos) > 7 else "-"
+            sig_nota_plan = fila_datos[8] if len(fila_datos) > 8 else "-"
+            
+            context.user_data['fila_actual'] = siguiente_idx + 1
+            context.user_data['ejercicio_actual'] = sig_ejercicio
+            
+            await update.message.reply_text(f"⏳ Buscando el siguiente ejercicio de tu planificación del {fecha_actual_str}...")
+            
+            mensaje = (
+                f"📍 *EJERCICIO:* {sig_ejercicio} 🎯 *META:* {sig_meta_reps} | {sig_meta_peso}\n"
+                f"📝 *NOTA:* {sig_nota_plan}\n\n"
+                "Datos separados por coma: Reps, Peso, Calentamiento, Obs\n"
+                "*(Ej: 12, 30, 2 series, contracción brutal)*\n\n"
+                "✍️ Ingresa los datos ahora (o manda /cancelar para volver atrás):"
+            )
+            await update.message.reply_text(mensaje, parse_mode="Markdown")
+            return INGRESANDO_DATOS
+        else:
+            # Si no hay más ejercicios, mostramos el resumen final invirtiendo hacia mostrar_rutina
+            return await mostrar_rutina(update, context)
 
     except Exception as e:
         await update.message.reply_text(f"❌ Error al guardar en Sheets: {e}")

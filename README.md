@@ -8,7 +8,7 @@ El registro manual de entrenamientos en aplicaciones de notas convencionales gen
 Además, registrar datos textualmente en un smartphone durante un entrenamiento físico de alta intensidad genera una alta carga cognitiva y errores tipográficos frecuentes.
 
 ## 💡 La Solución (V2 - Arquitectura Interactiva / Telegram Bot en Render)
-Se construyó un bot en Telegram respaldado por un motor asíncrono en Python alojado en **Render**. A diferencia de un bot de comandos tradicional, el sistema implementa un **Flujo Conversacional (State Machine)** que lee la planificación dinámica desde la base de datos y despliega **botones interactivos (Inline Keyboards)**. Esto reduce la fricción del usuario a cero, permitiendo registrar la hipertrofia (Peso, Reps, Notas) con clics en lugar de tipeo complejo, y escribiendo mediante **lógica de Update No Destructivo (Append)** en la capa transaccional.
+Se construyó un bot en Telegram respaldado por un motor asíncrono en Python alojado en **Render**. A diferencia de un bot de comandos tradicional, el sistema implementa un **Flujo Conversacional (State Machine)** con lógica de **Linear Stepper (Auto-avance)**. El bot lee la planificación dinámica, agrupa las metas y notas tácticas de cada ejercicio, y guía al usuario de forma secuencial. Esto elimina la necesidad de navegar por menús durante el entrenamiento, permitiendo registrar la hipertrofia (Peso, Reps, Notas) sin fricción y escribiendo mediante **lógica de Update No Destructivo (Append)** en la capa transaccional.
 
 Para garantizar disponibilidad 24/7 en la capa gratuita, el bot integra un micro-servidor de "Keep-Alive" monitoreado externamente por **UptimeRobot**.
 
@@ -42,8 +42,8 @@ Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la f
 ~~~
 
 ## 🧠 Características Técnicas Destacadas
+* **Linear Stepper (Auto-Avance UX):** Algoritmo de escaneo en tiempo real que detecta el próximo ejercicio vacío y autogestiona la transición, eliminando la navegación manual de menús en entornos de alta intensidad física.
 * **Máquina de Estados (ConversationHandler):** Control estricto de la interacción del bot.
-* **Acceso a Datos O(1):** Mapeo dinámico del `index` de la fila (`callback_data`) para escrituras directas.
 * **Update No Destructivo (Append):** El código lee el estado actual de la celda de observaciones antes de escribir, concatenando los nuevos registros de peso y sensaciones sin destruir el histórico.
 * **Inteligencia de Datos (MDM & Regex):** El motor ETL resuelve identidades (Alias de ejercicios) y prioriza la serie efectiva pesada (S3 > S2 > S1) ignorando el ruido de los calentamientos.
 * **Lógica de "Descarga Global":** Detección automática de semanas de descanso para evitar falsos positivos en los cálculos de estancamiento.
@@ -59,5 +59,6 @@ Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la f
 * **Integración Cloud:** Google Cloud Platform (Google Sheets API, `gspread`)
 
 ## 🚀 Guía de Uso Rápido
-1. **Ingesta:** Usa el comando `/rutina` en Telegram. Responde a los botones interactivos con el formato: `Reps, Peso, Calentamiento, Obs`.
-2. **Visualización:** Accede a la URL en Streamlit Cloud (o ejecuta `streamlit run dashboard.py` en local) para auditar el cumplimiento del bloque, la recuperación del SNC y visualizar los gráficos de meta vs realidad.
+1. **Ingesta:** Usa el comando `/rutina` en Telegram para recibir tu Briefing Táctico y presiona **Iniciar**.
+2. **Ejecución Continua:** El bot te pedirá el registro (`Reps, Peso, Calentamiento, Obs`). Al enviarlo, el sistema saltará automáticamente al siguiente ejercicio de tu planificación.
+3. **Visualización:** Accede a la URL en Streamlit Cloud para auditar el cumplimiento del bloque, la recuperación del SNC y visualizar los gráficos de meta vs realidad.
