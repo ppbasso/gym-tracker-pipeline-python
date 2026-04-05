@@ -70,6 +70,10 @@ def extract_real_weight(row):
 def process_data(df):
     df = df[df['Ejercicio'] != ''].copy()
     
+    # --- ETL: NORMALIZACIÓN DE LLAVE PRIMARIA ---
+    # Extirpa sufijos tácticos de inclinación de banco (Ej: "Remo (4)" -> "Remo")
+    df['Ejercicio'] = df['Ejercicio'].str.replace(r'\s*\(\d+\)', '', regex=True).str.strip()
+    
     ALIAS_MAP = {
         "Triceps Skull Crushers con Mancuernas": "Extension de Triceps con Mancuernas",
         "Extension de Triceps sobre cabeza": "Extension de Triceps con Mancuerna sobre cabeza",
