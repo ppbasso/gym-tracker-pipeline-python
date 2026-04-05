@@ -33,13 +33,13 @@ async def mostrar_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mensaje de bienvenida oficial."""
     mensaje = (
         "🤖 *¡Sistema de Entrenamiento Interactivo!*\n\n"
-        "👉 Toca o escribe: `/rutina` para ver tus ejercicios de hoy y registrarlos con un par de clics."
+        "👉 Toca o escribe: /rutina para ver tus ejercicios de hoy y registrarlos con un par de clics."
     )
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 async def educar_usuario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Atrapalotodo global: Atrapa comandos huérfanos (/cancelar, /heavy) o textos (hola)."""
-    mensaje = "⚠️ *Comando o texto no reconocido.*\n\n👉 Por favor, usa el comando `/rutina` para interactuar con tu planificación."
+    mensaje = "⚠️ *Comando o texto no reconocido.*\n\n👉 Por favor, usa el comando /rutina para interactuar con tu planificación."
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -47,7 +47,7 @@ async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     # query.answer detiene el circulito de carga en Telegram. show_alert lanza un pop-up.
     await query.answer("Esta botonera ha expirado ❌", show_alert=True)
-    await query.message.reply_text("⚠️ *Botón Expirado*\nEse menú es antiguo o el bot se reinició. Escribe `/rutina` para generar uno nuevo.", parse_mode="Markdown")
+    await query.message.reply_text("⚠️ *Botón Expirado*\nEse menú es antiguo o el bot se reinició. Escribe /rutina para generar uno nuevo.", parse_mode="Markdown")
 
 
 # --- INICIO DEL FLUJO DE TRABAJO (MÁQUINA DE ESTADOS) ---
@@ -76,13 +76,14 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ejercicio = fila[2]
                 meta_reps = fila[3] if len(fila) > 3 else "-"
                 meta_peso = fila[7] if len(fila) > 7 else "-"
+                nota_plan = fila[8] if len(fila) > 8 else ""
 
                 ya_hecho = False
                 if len(fila) > 4 and fila[4].strip() not in ["", "0"]:
                     ya_hecho = True
                 
                 icono = "✅" if ya_hecho else "⏳"
-                texto_rutina += f"{icono} *{ejercicio}*\n🎯 Meta: {meta_reps} | {meta_peso}\n\n"
+                texto_rutina += f"{icono} *{ejercicio}*\n🎯 Meta: {meta_reps} | {meta_peso}\n📝 Notas: {nota_plan}\n\n"
 
                 botones.append([InlineKeyboardButton(f"{icono} {ejercicio}", callback_data=str(i))])
 
@@ -132,11 +133,19 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['fila_actual'] = fila_idx + 1
 
     registros = sheet.get_all_values()
-    ejercicio = registros[fila_idx][2]
+    fila_datos = registros[fila_idx]
+    
+    ejercicio = fila_datos[2]
+    meta_reps = fila_datos[3] if len(fila_datos) > 3 else "-"
+    meta_peso = fila_datos[7] if len(fila_datos) > 7 else "-"
+    nota_plan = fila_datos[8] if len(fila_datos) > 8 else "-"
+    
     context.user_data['ejercicio_actual'] = ejercicio
 
     mensaje = (
-        f"📍 Seleccionaste: *{ejercicio}*\n\n"
+        f"📍 *EJERCICIO:* {ejercicio}\n\n"
+        f"🎯 *META:* {meta_reps} | {meta_peso}\n"
+        f"📝 *NOTA:* {nota_plan}\n\n"
         "Escribe tus datos separados por coma:\n"
         "`Reps, Peso, Calentamiento, Obs`\n\n"
         "*(Ej: 12, 30, 2 series, contracción brutal)*\n\n"
