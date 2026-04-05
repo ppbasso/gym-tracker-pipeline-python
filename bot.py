@@ -90,8 +90,8 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ya_hecho = True
                 
                 icono = "✅" if ya_hecho else "⏳"
-                # Compresión visual UX: Todo en 2 líneas
-                texto_rutina += f"{icono} *{ejercicio}* 🎯 Meta: {meta_reps} | {meta_peso}\n📝 Notas: {nota_plan}\n\n"
+                # Descompresión selectiva para Viewport móvil (evitar text-wrap asimétrico)
+                texto_rutina += f"{icono} *{ejercicio}*\n🎯 Meta: {meta_reps} | {meta_peso}\n📝 Notas: {nota_plan}\n\n"
 
                 # Lógica Linear Stepper: Encontrar el primer vacío
                 if not ya_hecho and primer_pendiente_idx is None:
@@ -158,7 +158,7 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data['ejercicio_actual'] = ejercicio
 
-    # Compresión Extrema para Viewport de iOS
+    # Compresión Extrema para Viewport de iOS (Mantenida intacta)
     mensaje = (
         f"📍 *EJERCICIO:* {ejercicio} 🎯 *META:* {meta_reps} | {meta_peso}\n"
         f"📝 *NOTA:* {nota_plan}\n\n"
@@ -228,7 +228,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await update.message.reply_text(f"⏳ Buscando el siguiente ejercicio de tu planificación del {fecha_actual_str}...")
             
-            # Compresión Extrema para Viewport de iOS
+            # Compresión Extrema para Viewport de iOS (Mantenida intacta)
             mensaje = (
                 f"📍 *EJERCICIO:* {sig_ejercicio} 🎯 *META:* {sig_meta_reps} | {sig_meta_peso}\n"
                 f"📝 *NOTA:* {sig_nota_plan}\n\n"
