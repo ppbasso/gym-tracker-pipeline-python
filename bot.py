@@ -158,13 +158,12 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data['ejercicio_actual'] = ejercicio
 
-    # Visión de Túnel (Comprimida)
+    # Compresión Extrema para Viewport de iOS
     mensaje = (
         f"📍 *EJERCICIO:* {ejercicio} 🎯 *META:* {meta_reps} | {meta_peso}\n"
         f"📝 *NOTA:* {nota_plan}\n\n"
-        "Datos separados por coma: Reps, Peso, Calentamiento, Obs\n"
-        "*(Ej: 12, 30, 2 series, contracción brutal)*\n\n"
-        "✍️ Ingresa los datos ahora (o manda /cancelar para volver atrás):"
+        "Reps, Peso, Calentamiento, Obs *(Ej: 12, 30, 2 series, contracción brutal)*\n"
+        "✍️ Ingresa datos ahora (o /cancelar para volver):"
     )
     await query.edit_message_text(mensaje, parse_mode="Markdown")
     
@@ -229,12 +228,12 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             await update.message.reply_text(f"⏳ Buscando el siguiente ejercicio de tu planificación del {fecha_actual_str}...")
             
+            # Compresión Extrema para Viewport de iOS
             mensaje = (
                 f"📍 *EJERCICIO:* {sig_ejercicio} 🎯 *META:* {sig_meta_reps} | {sig_meta_peso}\n"
                 f"📝 *NOTA:* {sig_nota_plan}\n\n"
-                "Datos separados por coma: Reps, Peso, Calentamiento, Obs\n"
-                "*(Ej: 12, 30, 2 series, contracción brutal)*\n\n"
-                "✍️ Ingresa los datos ahora (o manda /cancelar para volver atrás):"
+                "Reps, Peso, Calentamiento, Obs *(Ej: 12, 30, 2 series, contracción brutal)*\n"
+                "✍️ Ingresa datos ahora (o /cancelar para volver):"
             )
             await update.message.reply_text(mensaje, parse_mode="Markdown")
             return INGRESANDO_DATOS
