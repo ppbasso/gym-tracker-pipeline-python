@@ -14,7 +14,7 @@ Para garantizar disponibilidad 24/7 en la capa gratuita, el bot integra un micro
 
 > *Visualización Ingesta de Datos*
 <br>
-<img src="bot_demo.gif" width="250" alt="Bot Telegram Demo">
+<img src="bot_demo.gif" width="300" alt="Bot Telegram Demo">
 
 ## 📊 La Solución (V3 - Capa de Auditoría y BI / Streamlit)
 Para cerrar el ciclo de vida del dato, se construyó un Dashboard Analítico (`dashboard.py`) en **Streamlit Cloud** que actúa como un auditor implacable del rendimiento. Este panel extrae la data de Google Sheets, aplica limpieza avanzada (Regex) para aislar series efectivas y estandarizar nombres (Master Data Management), y calcula el E1RM (1 Repetición Máxima Estimada).
@@ -22,7 +22,7 @@ Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la f
 
 > *Visualización Dashboard Auditoría*
 <br>
-<img src="dashboard_demo.gif" width="250" alt="Dashboard BI Demo">
+<img src="dashboard_demo.gif" width="300" alt="Dashboard BI Demo">
 
 ## 🏗️ Arquitectura de Alto Nivel
 
@@ -30,7 +30,7 @@ Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la f
 [Usuario / Telegram Mobile] 
        | (JSON API / Webhooks)
        v
-[Render Cloud (Python Bot)] ---> Despliegue UI Dinámica y Parsea Inputs
+[Render Cloud (Python Bot)] ---> Despliegue UI Dinámica, Motor Forense y Parsea Inputs
        |
        | (Google OAuth2 / gspread) -> Lógica de Append
        v
@@ -38,17 +38,16 @@ Cruza el **Plan (Meta)** contra la **Realidad (Ejecución)** y alerta sobre la f
        |
        | (Pandas / Regex ETL) -> Limpieza, MDM y Cálculo E1RM
        v
-[Streamlit + Altair Dashboard] ---> Visualización Front-End, Radar SNC y Gráficos Duales
+[Streamlit + Altair Dashboard] ---> Visualización Front-End, Motor Dual y Radar SNC
 ~~~
 
 ## 🧠 Características Técnicas Destacadas
+* **Motor Forense (Contexto Histórico):** Algoritmo de retroceso temporal que escanea el Data Warehouse para inyectar la última marca válida (Reps x Peso real extraído vía Regex) directamente en la UI del bot, aislando y descartando heurísticamente semanas de "descarga" completas para garantizar la sobrecarga progresiva sin riesgo de lesiones.
+* **Motor de Renderizado Dual (BI):** Arquitectura de visualización bifurcada en Streamlit que permite auditar la data bajo dos enfoques analíticos: un eje **Biomecánico** (Grupos Musculares aislados con protección contra Falsos Positivos) o un eje **Operativo** basado en listas deterministas (Módulo Alpha / Módulo Omega), haciendo el análisis agnóstico a los días de la semana.
 * **Linear Stepper (Auto-Avance UX):** Algoritmo de escaneo en tiempo real que detecta el próximo ejercicio vacío y autogestiona la transición, eliminando la navegación manual de menús en entornos de alta intensidad física.
-* **Máquina de Estados (ConversationHandler):** Control estricto de la interacción del bot.
 * **Update No Destructivo (Append):** El código lee el estado actual de la celda de observaciones antes de escribir, concatenando los nuevos registros de peso y sensaciones sin destruir el histórico.
-* **Inteligencia de Datos (MDM & Regex):** El motor ETL resuelve identidades (Alias de ejercicios) y prioriza la serie efectiva pesada (S3 > S2 > S1) ignorando el ruido de los calentamientos.
-* **Lógica de "Descarga Global":** Detección automática de semanas de descanso para evitar falsos positivos en los cálculos de estancamiento.
-* **Disponibilidad 24/7:** Sistema de Keep-Alive mediante servidor HTTP interno para evitar la suspensión del servicio en capas gratuitas monitoreado por **UptimeRobot**.
-* **UI Adaptativa y Accesible:** Gráficos Altair de alto contraste sin interpolaciones confusas, diseñados bajo enfoque Mobile-First.
+* **Inteligencia de Datos (MDM):** El motor ETL resuelve identidades (Alias de ejercicios) y prioriza la serie efectiva pesada (S3 > S2 > S1) ignorando el ruido de los calentamientos.
+* **Disponibilidad 24/7 y Sincronización Temporal:** Sistema de Keep-Alive compatible con método `HEAD` de UptimeRobot y sincronización forzada de huso horario (`TZ`) en los contenedores Linux para estandarización de logs de auditoría.
 
 ## 🛠️ Stack Tecnológico
 * **Lenguaje:** Python 3.10+
