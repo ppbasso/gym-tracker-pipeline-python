@@ -297,42 +297,94 @@ if total_auditados > 0:
 
 st.markdown("---")
 
-# --- PESTAÑAS BIOMECÁNICAS AISLADAS ---
-st.markdown("### 🔬 AUDITORÍA POR GRUPO MUSCULAR")
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚀 Pecho", "🦇 Espalda", "🥥 Hombros", "🦵 Piernas", "🦾 Brazos"])
+# --- MOTOR DE VISTA DUAL (BIOMECÁNICA VS OPERATIVA) ---
+modo_vista = st.radio(
+    "🔄 Selecciona el Eje de Análisis:",
+    ["🔬 Por Grupo Muscular (Biomecánica)", "⚙️ Por Módulos de Entrenamiento (Operativa)"],
+    horizontal=True
+)
 
-def render_musculo(nombre_grupo):
-    df_g = df_full[df_full['Grupo'] == nombre_grupo]
-    if df_g.empty: return
+if modo_vista == "🔬 Por Grupo Muscular (Biomecánica)":
+    st.markdown("### 🔬 AUDITORÍA POR GRUPO MUSCULAR")
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚀 Pecho", "🦇 Espalda", "🥥 Hombros", "🦵 Piernas", "🦾 Brazos"])
+
+    def render_musculo(nombre_grupo):
+        df_g = df_full[df_full['Grupo'] == nombre_grupo]
+        if df_g.empty: return
+            
+        ejercicios = df_g['Ejercicio'].unique()
+        activos_info, inactivos_list = [], []
         
-    ejercicios = df_g['Ejercicio'].unique()
-    activos_info, inactivos_list = [], []
-    
-    for ej in ejercicios:
-        if status_map[ej]['activo']:
-            activos_info.append({'nombre': ej, 'prox_fecha': status_map[ej]['prox_fecha']})
-        else:
-            inactivos_list.append(ej)
-            
-    activos_info.sort(key=lambda x: x['prox_fecha'])
-    vivos_ordenados = [x['nombre'] for x in activos_info]
-    
-    if vivos_ordenados:
-        st.markdown("#### 🟢 RUTINA ACTIVA")
-        for ej in vivos_ordenados:
-            prox_f = status_map[ej]['prox_fecha']
-            etiqueta_dia = f"[{prox_f.strftime('%d/%m')}]" if prox_f.year != 2099 else "[Activo]"
-            st.markdown(f"##### {etiqueta_dia} {ej}")
-            render_ejercicio_bloque(ej, df_g, is_activo=True)
-            
-    if inactivos_list:
-        with st.expander("⚫ HISTÓRICO / INACTIVOS (Cementerio)"):
-            for ej in inactivos_list:
-                st.markdown(f"##### {ej} (Inactivo)")
-                render_ejercicio_bloque(ej, df_g, is_activo=False)
+        for ej in ejercicios:
+            if status_map[ej]['activo']:
+                activos_info.append({'nombre': ej, 'prox_fecha': status_map[ej]['prox_fecha']})
+            else:
+                inactivos_list.append(ej)
+                
+        activos_info.sort(key=lambda x: x['prox_fecha'])
+        vivos_ordenados = [x['nombre'] for x in activos_info]
+        
+        if vivos_ordenados:
+            st.markdown("#### 🟢 RUTINA ACTIVA")
+            for ej in vivos_ordenados:
+                prox_f = status_map[ej]['prox_fecha']
+                etiqueta_dia = f"[{prox_f.strftime('%d/%m')}]" if prox_f.year != 2099 else "[Activo]"
+                st.markdown(f"##### {etiqueta_dia} {ej}")
+                render_ejercicio_bloque(ej, df_g, is_activo=True)
+                
+        if inactivos_list:
+            with st.expander("⚫ HISTÓRICO / INACTIVOS (Cementerio)"):
+                for ej in inactivos_list:
+                    st.markdown(f"##### {ej} (Inactivo)")
+                    render_ejercicio_bloque(ej, df_g, is_activo=False)
 
-with tab1: render_musculo("Pecho")
-with tab2: render_musculo("Espalda")
-with tab3: render_musculo("Hombros")
-with tab4: render_musculo("Piernas")
-with tab5: render_musculo("Brazos")
+    with tab1: render_musculo("Pecho")
+    with tab2: render_musculo("Espalda")
+    with tab3: render_musculo("Hombros")
+    with tab4: render_musculo("Piernas")
+    with tab5: render_musculo("Brazos")
+
+else:
+    st.markdown("### ⚙️ AUDITORÍA POR MÓDULOS DE ENTRENAMIENTO")
+    tabA, tabB = st.tabs(["🐺 Módulo Alpha", "Ω Módulo Omega"])
+    
+    # Nombres normalizados POST-ETL (Exactamente como quedan después de la limpieza)
+    MODULO_ALPHA = [
+        "Press con Mancuernas Plano",
+        "Remo Inclinado con Mancuernas",
+        "Press Inclinado con Mancuernas",
+        "Pájaro (Vuelos Posteriores)",
+        "Elevaciones Laterales con Mancuernas",
+        "Curl Bicep Concentrado",
+        "Extension de Triceps con Mancuernas",
+        "Goblet Squat con Mancuerna"
+    ]
+    
+    MODULO_OMEGA = [
+        "Remo con Barra",
+        "Press con Mancuernas Plano",
+        "Press de Hombro con Mancuernas Sentado",
+        "Remo a Una Mano con Mancuerna",
+        "Curl Biceps con Barra Recta",
+        "Extension de Triceps con Mancuerna sobre cabeza", 
+        "Hammer Curl Biceps con Mancuernas Sentado"
+    ]
+    
+    def render_modulo(lista_ejercicios):
+        for ej in lista_ejercicios:
+            if ej in status_map:
+                # Se filtra directamente en df_full para no perder el tracking por grupo
+                df_g = df_full[df_full['Ejercicio'] == ej]
+                is_activo = status_map[ej]['activo']
+                prox_f = status_map[ej]['prox_fecha']
+                etiqueta_dia = f"[{prox_f.strftime('%d/%m')}]" if prox_f.year != 2099 else "[Activo]"
+                estado = "🟢" if is_activo else "⚫ (Inactivo)"
+                
+                st.markdown(f"##### {estado} {etiqueta_dia} {ej}")
+                render_ejercicio_bloque(ej, df_g, is_activo=is_activo)
+            else:
+                st.markdown(f"##### ⏳ {ej}")
+                st.info("Sin registros históricos aún en Google Sheets para este ejercicio.")
+
+    with tabA: render_modulo(MODULO_ALPHA)
+    with tabB: render_modulo(MODULO_OMEGA)
