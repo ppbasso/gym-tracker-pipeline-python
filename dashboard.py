@@ -131,13 +131,33 @@ def process_data(df):
         
     return df, dict_status
 
+
+# --- CORRECCIÓN: RED FINA DE CATEGORIZACIÓN (ANTIFALSOS POSITIVOS) ---
 def get_grupo(ej):
     n = ej.lower()
-    if any(x in n for x in ['hombro', 'lateral', 'pájaro', 'shrug', 'squat', 'muerto']): return 'Hombros & Piernas'
-    if any(x in n for x in ['remo', 'espalda']): return 'Espalda'
-    if any(x in n for x in ['curl', 'triceps', 'tríceps', 'skull']): return 'Brazos'
-    if any(x in n for x in ['press', 'pecho', 'banca']): return 'Pecho'
+    
+    # 1. Filtros de Pierna (Evaluación Prioritaria)
+    if any(x in n for x in ['squat', 'peso muerto', 'prensa', 'femoral', 'gemelo', 'pantorrilla']): 
+        return 'Piernas'
+        
+    # 2. Filtros de Hombro
+    if any(x in n for x in ['lateral', 'pájaro', 'shrug', 'press militar']): 
+        return 'Hombros'
+        
+    # 3. Filtros de Espalda
+    if any(x in n for x in ['remo', 'espalda', 'pulldown', 'dominada']): 
+        return 'Espalda'
+        
+    # 4. Filtros de Brazos
+    if any(x in n for x in ['curl', 'triceps', 'tríceps', 'skull', 'bicep', 'bícep']): 
+        return 'Brazos'
+        
+    # 5. Filtros de Pecho (Se evalúa al final para evitar atrapar "Press Militar")
+    if any(x in n for x in ['press', 'pecho', 'banca', 'aperturas']): 
+        return 'Pecho'
+        
     return 'Otros'
+
 
 # ==========================================
 # 3. COMPONENTES VISUALES
@@ -277,9 +297,9 @@ if total_auditados > 0:
 
 st.markdown("---")
 
-# --- PESTAÑAS BIOMECÁNICAS ---
+# --- PESTAÑAS BIOMECÁNICAS AISLADAS ---
 st.markdown("### 🔬 AUDITORÍA POR GRUPO MUSCULAR")
-tab1, tab2, tab3, tab4 = st.tabs(["🚀 Pecho", "🦇 Espalda", "💥 Hombros & Piernas", "🦾 Brazos"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["🚀 Pecho", "🦇 Espalda", "🥥 Hombros", "🦵 Piernas", "🦾 Brazos"])
 
 def render_musculo(nombre_grupo):
     df_g = df_full[df_full['Grupo'] == nombre_grupo]
@@ -313,5 +333,6 @@ def render_musculo(nombre_grupo):
 
 with tab1: render_musculo("Pecho")
 with tab2: render_musculo("Espalda")
-with tab3: render_musculo("Hombros & Piernas")
-with tab4: render_musculo("Brazos")
+with tab3: render_musculo("Hombros")
+with tab4: render_musculo("Piernas")
+with tab5: render_musculo("Brazos")
