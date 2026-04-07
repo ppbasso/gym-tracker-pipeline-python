@@ -1,4 +1,5 @@
 import os
+import re # <--- AÑADIDA: Librería para buscar patrones de texto (Regex)
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
@@ -24,6 +25,73 @@ sheet = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").works
 # FASE 2: ESTADOS DE LA CONVERSACIÓN
 # ==========================================
 SELECCIONANDO, INGRESANDO_DATOS = range(2)
+
+# ==========================================
+# FASE 2.5: MOTOR FORENSE (HISTÓRICO Y PREVENCIÓN)
+# ==========================================
+def extract_real_weight_bot(peso_proyectado_str, nota_str):
+    """Extrae el peso real levantado usando la misma lógica ETL del dashboard."""
+    base_w_str = str(peso_proyectado_str).lower().replace('kg', '').strip()
+    try: base_w = float(base_w_str)
+    except: base_w = 0.0
+
+    nota = str(nota_str).lower()
+
+    for prefix in ['peso real:', 'peso real', 'sigo con', 'estoy con']:
+        if prefix in nota:
+            m = re.search(rf'{prefix}\s*(\d+\.?\d*)', nota)
+            if m: return float(m.group(1))
+
+    m_serie = re.search(r'serie.*?(\d+\.?\d*)\s*kg', nota)
+    if m_serie: return float(m_serie.group(1))
+
+    m_con = re.search(r'con\s*(\d+\.?\d*)\s*kg', nota)
+    if m_con: return float(m_con.group(1))
+
+    return base_w
+
+def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
+    """Busca hacia atrás la última sesión efectiva, saltándose fechas de descarga completas."""
+    # 1. Crear Lista Negra de fechas de descarga (Propagación por fecha)
+    fechas_descarga = set()
+    for fila in registros:
+        if len(fila) > 8 and 'descarga' in fila[8].lower():
+            fechas_descarga.add(fila[0])
+
+    try:
+        current_date = datetime.strptime(current_date_str, "%d/%m/%Y")
+    except ValueError:
+        return "" # Falla de seguridad si la fecha no es parseable
+    
+    ultimo_registro = None
+    
+    # 2. Escaneo Forense Hacia Atrás
+    for fila in registros:
+        if len(fila) > 2 and fila[2].strip() == target_ejercicio.strip():
+            try:
+                fila_date = datetime.strptime(fila[0], "%d/%m/%Y")
+                # Filtro Pitbull: Debe ser en el pasado Y la fecha no puede estar en la lista negra
+                if fila_date < current_date and fila[0] not in fechas_descarga:
+                    ultimo_registro = fila
+            except ValueError:
+                continue
+                
+    # 3. Formateo de Salida
+    if ultimo_registro:
+        fecha_valida = ultimo_registro[0][:5] # Extraer solo DD/MM para ahorrar espacio
+        reps = ultimo_registro[4] if len(ultimo_registro) > 4 and ultimo_registro[4].strip() else "0"
+        peso_proy = ultimo_registro[7] if len(ultimo_registro) > 7 else "0"
+        nota = ultimo_registro[8] if len(ultimo_registro) > 8 else ""
+        
+        peso_real = extract_real_weight_bot(peso_proy, nota)
+        
+        # Limpieza visual: quitar decimales si es un peso entero (ej: 30.0 -> 30)
+        if float(peso_real).is_integer():
+            peso_real = int(peso_real)
+            
+        return f"\n_🕰️ Último válido ({fecha_valida}): {reps} reps x {peso_real} kg_"
+    
+    return "" # Si no hay historial válido
 
 # ==========================================
 # FASE 3: LÓGICA DEL BOT (UX Y NAVEGACIÓN)
@@ -158,10 +226,14 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data['ejercicio_actual'] = ejercicio
 
+    # --- INYECCIÓN: MOTOR FORENSE ---
+    fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
+    historial_str = get_ultimo_registro_valido(registros, ejercicio, fecha_actual_str)
+
     # Compresión Extrema para Viewport de iOS (Mantenida intacta)
     mensaje = (
         f"📍 *EJERCICIO:* {ejercicio} 🎯 *META:* {meta_reps} | {meta_peso}\n"
-        f"📝 *NOTA:* {nota_plan}\n\n"
+        f"📝 *NOTA:* {nota_plan}{historial_str}\n\n"
         "Reps, Peso, Calentamiento, Obs *(Ej: 12, 30, 2 series, contracción brutal)*\n"
         "✍️ Ingresa datos ahora (o /cancelar para volver):"
     )
@@ -226,12 +298,15 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['fila_actual'] = siguiente_idx + 1
             context.user_data['ejercicio_actual'] = sig_ejercicio
             
+            # --- INYECCIÓN: MOTOR FORENSE (LOCOMOTORA) ---
+            historial_str = get_ultimo_registro_valido(registros, sig_ejercicio, fecha_actual_str)
+
             await update.message.reply_text(f"⏳ Buscando el siguiente ejercicio de tu planificación del {fecha_actual_str}...")
             
             # Compresión Extrema para Viewport de iOS (Mantenida intacta)
             mensaje = (
                 f"📍 *EJERCICIO:* {sig_ejercicio} 🎯 *META:* {sig_meta_reps} | {sig_meta_peso}\n"
-                f"📝 *NOTA:* {sig_nota_plan}\n\n"
+                f"📝 *NOTA:* {sig_nota_plan}{historial_str}\n\n"
                 "Reps, Peso, Calentamiento, Obs *(Ej: 12, 30, 2 series, contracción brutal)*\n"
                 "✍️ Ingresa datos ahora (o /cancelar para volver):"
             )
