@@ -354,7 +354,7 @@ async def iniciar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 @requiere_admin
 async def guardar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Recibe la data, valida la longitud y la anexa a la hoja Mediciones."""
+    """Recibe la data, valida la longitud y la inyecta con precisión quirúrgica."""
     texto = update.message.text.strip()
     
     if texto.lower() == "/cancelar":
@@ -363,7 +363,6 @@ async def guardar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     partes = [p.strip() for p in texto.split(",")]
     
-    # Validación estricta: Deben ser exactamente 9 valores (excluyendo la fecha)
     if len(partes) != 9:
         await update.message.reply_text(
             f"❌ *Error de Formato:*\nEsperaba 9 datos, pero detecté {len(partes)}.\n"
@@ -371,18 +370,25 @@ async def guardar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return INGRESANDO_MEDICIONES
 
-    # Generamos la fecha/hora exacta de la ingesta
     ahora = datetime.now().strftime("%d/%m/%Y %H:%M")
-    
-    # Construimos la fila: [Fecha, Peso, Cuello...]
     fila_nueva = [ahora] + partes
 
-    await update.message.reply_text("⏳ Sincronizando biometría con el Data Warehouse...")
+    await update.message.reply_text("⏳ Sincronizando biometría con precisión...")
 
     try:
-        # append_row inyecta los datos en la primera fila vacía al final del documento
-        sheet_mediciones.append_row(fila_nueva)
-        await update.message.reply_text("✅ ¡Métricas corporales guardadas exitosamente!")
+        # LÓGICA DE FRANCOTIRADOR: 
+        # 1. Obtenemos todos los valores de la Columna A (Fechas)
+        columna_fechas = sheet_mediciones.col_values(1)
+        # 2. Eliminamos los vacíos por si hay celdas fantasma entre medio
+        fechas_reales = [f for f in columna_fechas if f.strip() != ""]
+        # 3. La fila correcta es la cantidad de fechas reales + 1
+        siguiente_fila = len(fechas_reales) + 1
+        
+        # 4. Inyectamos la lista como una fila nueva en el rango exacto
+        rango = f'A{siguiente_fila}:J{siguiente_fila}'
+        sheet_mediciones.update(values=[fila_nueva], range_name=rango)
+        
+        await update.message.reply_text("✅ ¡Métricas corporales guardadas exitosamente en la fila correcta!")
     except Exception as e:
         await update.message.reply_text(f"❌ Error al guardar en Sheets: {e}")
 
