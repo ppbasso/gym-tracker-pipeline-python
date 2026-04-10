@@ -2,6 +2,7 @@ import os
 import re # <--- AÑADIDA: Librería para buscar patrones de texto (Regex)
 from functools import wraps # <--- AÑADIDA: Para crear el guardia de seguridad (Decorador)
 from datetime import datetime, timedelta # <--- AÑADIDA: timedelta para manipulación de fechas
+import time # <--- AÑADIDA: Control de concurrencia para evitar crashes en Render
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
 import gspread
@@ -314,7 +315,7 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
         primer_pendiente_idx = None
         primer_pendiente_nombre = None
 
-        for i, fila in enumerate(registros):
+        for i, enumerate(registros):
             if len(fila) > 2 and fila[0] == fecha_actual_str:
                 tiene_entrenamiento_hoy = True
                 ejercicio = fila[2]
@@ -568,7 +569,7 @@ def main():
     )
     app.add_handler(conv_mediciones)
 
-    # 3. LA MÁQUINA DE ESTADOS (Nuevo Módulo Logístico: Posponer)
+    # 3. LA MÁQUINA DE ESTADOS (Módulo Logístico: Posponer)
     conv_posponer = ConversationHandler(
         entry_points=[CommandHandler('posponer', iniciar_posponer)],
         states={
@@ -592,8 +593,12 @@ def main():
     # --- LÍNEA AGREGADA 2 (PARA RENDER) ---
     keep_alive()
 
+    # --- SOLUCIÓN DE FONDO PARA OVERLAP DE RENDER ---
+    print("⏳ Retraso táctico de 12s para evitar colisión de despliegues en Render...")
+    time.sleep(12) 
+
     print("🤖 Servidor de Bot interactivo corriendo... ¡A prueba de fallos!")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == '__main__':
     main()
