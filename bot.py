@@ -1,5 +1,6 @@
 import os
 import re # <--- AÑADIDA: Librería para buscar patrones de texto (Regex)
+from functools import wraps # <--- AÑADIDA: Para crear el guardia de seguridad (Decorador)
 from datetime import datetime
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
@@ -11,6 +12,36 @@ from dotenv import load_dotenv
 from keep_alive import keep_alive
 
 load_dotenv()
+
+# ==========================================
+# FASE 0: SEGURIDAD Y CONTROL DE ACCESO
+# ==========================================
+# Carga tu ID desde el archivo .env. Si no existe, usa 0 (nadie entra).
+ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+
+def requiere_admin(func):
+    """
+    Decorador (Guardia de Seguridad). 
+    Se ejecuta ANTES de la función a la que protege. Si el ID no coincide,
+    bloquea la ejecución y lanza una alerta. Si coincide, te deja pasar.
+    """
+    @wraps(func)
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE, *args, **kwargs):
+        user_id = update.effective_user.id
+        if user_id != ADMIN_ID:
+            print(f"⚠️ INTRUSO DETECTADO: ID {user_id} intentó usar el bot.")
+            mensaje_bloqueo = "⛔ *SNC Security:* Acceso denegado. No eres el comandante autorizado."
+            
+            if update.message:
+                await update.message.reply_text(mensaje_bloqueo, parse_mode="Markdown")
+            elif update.callback_query:
+                await update.callback_query.answer("Acceso Denegado ⛔", show_alert=True)
+            
+            return ConversationHandler.END # Expulsa al usuario
+        
+        return await func(update, context, *args, **kwargs) # Todo ok, pasa a la función real
+    return wrapper
+
 
 # ==========================================
 # FASE 1: CONEXIÓN A GOOGLE SHEETS
@@ -97,6 +128,7 @@ def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
 # FASE 3: LÓGICA DEL BOT (UX Y NAVEGACIÓN)
 # ==========================================
 
+@requiere_admin
 async def mostrar_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mensaje de bienvenida oficial."""
     mensaje = (
@@ -105,6 +137,7 @@ async def mostrar_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
+@requiere_admin
 async def educar_usuario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Atrapalotodo global: Atrapa comandos huérfanos (/cancelar, /heavy) o textos (hola)."""
     mensaje = "⚠️ *Comando o texto no reconocido.*\n\n👉 Por favor, usa el comando /rutina para interactuar con tu planificación."
@@ -120,6 +153,7 @@ async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- INICIO DEL FLUJO DE TRABAJO (MÁQUINA DE ESTADOS) ---
 
+@requiere_admin
 async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     if query:
@@ -204,7 +238,7 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message_obj.reply_text(f"❌ Error al leer Google Sheets: {e}")
         return ConversationHandler.END
 
-
+@requiere_admin
 async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -241,7 +275,7 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return INGRESANDO_DATOS
 
-
+@requiere_admin
 async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.strip()
 
@@ -320,6 +354,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Error al guardar en Sheets: {e}")
         return ConversationHandler.END
 
+@requiere_admin
 async def cancelar_conversacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Operación cancelada. Usa /rutina cuando estés listo.")
     return ConversationHandler.END
