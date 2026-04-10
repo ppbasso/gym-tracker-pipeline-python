@@ -315,7 +315,7 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
         primer_pendiente_idx = None
         primer_pendiente_nombre = None
 
-        for i, enumerate(registros):
+        for i, fila in enumerate(registros): # <--- CORRECCIÓN DEL SYNTAX ERROR AQUÍ
             if len(fila) > 2 and fila[0] == fecha_actual_str:
                 tiene_entrenamiento_hoy = True
                 ejercicio = fila[2]
