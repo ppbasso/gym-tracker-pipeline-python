@@ -57,8 +57,8 @@ sheet_mediciones = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda7
 # ==========================================
 # FASE 2: ESTADOS DE LA CONVERSACIÓN
 # ==========================================
-# Añadimos un tercer estado para el nuevo túnel de biometría
-SELECCIONANDO, INGRESANDO_DATOS, INGRESANDO_MEDICIONES = range(3)
+# Ampliamos los estados para cubrir el módulo de entrenamiento, biometría y reagendamiento
+SELECCIONANDO, INGRESANDO_DATOS, INGRESANDO_MEDICIONES, POSPONER_ORIGEN, POSPONER_DESTINO = range(5)
 
 # ==========================================
 # FASE 2.5: MOTOR FORENSE (HISTÓRICO Y PREVENCIÓN)
@@ -128,73 +128,164 @@ def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
 
 @requiere_admin
 async def mostrar_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mensaje de bienvenida oficial actualizado con el nuevo comando."""
+    """Mensaje de bienvenida oficial actualizado."""
     mensaje = (
         "🤖 *¡Sistema de Comando Heavy Duty!*\n\n"
         "👉 Toca /rutina para iniciar tu entrenamiento.\n"
         "👉 Toca /medidas para registrar tu biometría corporal.\n"
-        "👉 Toca /posponer para mover el entreno de hoy a mañana."
+        "👉 Toca /posponer para reorganizar tu agenda de entrenamiento."
     )
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 @requiere_admin
 async def educar_usuario(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mensaje = "⚠️ *Comando no reconocido.*\n\n👉 Usa /rutina para entrenar o /medidas para biometría."
+    mensaje = "⚠️ *Comando no reconocido.*\n\n👉 Usa /rutina, /medidas o /posponer."
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer("Esta botonera ha expirado ❌", show_alert=True)
-    await query.message.reply_text("⚠️ *Botón Expirado*\nEse menú es antiguo o el bot se reinició. Escribe /rutina para generar uno nuevo.", parse_mode="Markdown")
+    await query.message.reply_text("⚠️ *Botón Expirado*\nEse menú es antiguo o el bot se reinició.", parse_mode="Markdown")
 
-# --- COMANDO DE OPERACIÓN LOGÍSTICA: /posponer ---
+
+# --- NUEVO FLUJO LOGÍSTICO: /posponer (MÁQUINA DE ESTADOS) ---
 
 @requiere_admin
-async def posponer_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Escanea los ejercicios de hoy que NO están hechos y los mueve a mañana."""
-    fecha_actual_dt = datetime.now()
-    fecha_actual_str = fecha_actual_dt.strftime("%d/%m/%Y")
+async def iniciar_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Paso 1: Escanea la DB y muestra los días disponibles para mover."""
+    await update.message.reply_text("⏳ Analizando tu calendario de entrenamientos pendientes...")
     
-    # Calculamos el día de mañana usando matemáticas de tiempo
-    fecha_manana_dt = fecha_actual_dt + timedelta(days=1)
-    fecha_manana_str = fecha_manana_dt.strftime("%d/%m/%Y")
+    hoy = datetime.now().date()
+    fechas_pendientes = set()
+    
+    try:
+        registros = sheet.get_all_values()
+        for fila in registros:
+            if len(fila) > 2:
+                try:
+                    fecha_fila = datetime.strptime(fila[0], "%d/%m/%Y").date()
+                    # Solo nos interesan fechas de hoy en adelante
+                    if fecha_fila >= hoy:
+                        ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
+                        if not ya_hecho:
+                            fechas_pendientes.add(fecha_fila)
+                except ValueError:
+                    continue
+        
+        if not fechas_pendientes:
+            await update.message.reply_text("🤷‍♂️ No tienes entrenamientos futuros pendientes en tu agenda.")
+            return ConversationHandler.END
+            
+        # Ordenar cronológicamente y tomar las próximas 4 sesiones
+        fechas_ordenadas = sorted(list(fechas_pendientes))[:4]
+        
+        botones = []
+        for d in fechas_ordenadas:
+            d_str = d.strftime("%d/%m/%Y")
+            botones.append([InlineKeyboardButton(f"📅 {d_str}", callback_data=f"orig_{d_str}")])
+            
+        botones.append([InlineKeyboardButton("❌ Cancelar", callback_data="cancelar_posponer")])
+        
+        await update.message.reply_text(
+            "📋 *¿Qué entrenamiento deseas posponer?*",
+            reply_markup=InlineKeyboardMarkup(botones),
+            parse_mode="Markdown"
+        )
+        return POSPONER_ORIGEN
 
-    await update.message.reply_text(f"⏳ Evaluando tu agenda del {fecha_actual_str}...")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al leer Google Sheets: {e}")
+        return ConversationHandler.END
+
+@requiere_admin
+async def origen_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Paso 2: Captura el origen y pregunta el destino."""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "cancelar_posponer":
+        await query.edit_message_text("❌ Reagendamiento cancelado.")
+        return ConversationHandler.END
+        
+    # Extraemos la fecha del CallbackData (Ej: "orig_10/04/2026")
+    fecha_origen = query.data.split("_")[1]
+    context.user_data['fecha_origen_posponer'] = fecha_origen
+    
+    botones = [
+        [InlineKeyboardButton("Mañana (+1 día)", callback_data="dest_manana")],
+        [InlineKeyboardButton("Pasado Mañana (+2 días)", callback_data="dest_pasado")],
+        [InlineKeyboardButton("Próximo Lunes", callback_data="dest_lunes")],
+        [InlineKeyboardButton("Próximo Viernes", callback_data="dest_viernes")],
+        [InlineKeyboardButton("❌ Cancelar", callback_data="cancelar_posponer")]
+    ]
+    
+    await query.edit_message_text(
+        f"📅 Has seleccionado el entrenamiento del *{fecha_origen}*.\n\n"
+        "¿Para cuándo deseas moverlo?",
+        reply_markup=InlineKeyboardMarkup(botones),
+        parse_mode="Markdown"
+    )
+    return POSPONER_DESTINO
+
+@requiere_admin
+async def destino_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Paso 3: Calcula la matemática, inyecta la nueva fecha y cierra el flujo."""
+    query = update.callback_query
+    await query.answer()
+
+    if query.data == "cancelar_posponer":
+        await query.edit_message_text("❌ Reagendamiento cancelado.")
+        return ConversationHandler.END
+
+    fecha_origen = context.user_data['fecha_origen_posponer']
+    destino_tipo = query.data.split("_")[1]
+    
+    hoy = datetime.now().date()
+    
+    # Cálculos matemáticos precisos del calendario
+    if destino_tipo == "manana":
+        nueva_fecha = hoy + timedelta(days=1)
+    elif destino_tipo == "pasado":
+        nueva_fecha = hoy + timedelta(days=2)
+    elif destino_tipo == "lunes":
+        dias_para_lunes = (0 - hoy.weekday() + 7) % 7
+        if dias_para_lunes == 0: dias_para_lunes = 7 # Si hoy es lunes, salta al próximo
+        nueva_fecha = hoy + timedelta(days=dias_para_lunes)
+    elif destino_tipo == "viernes":
+        dias_para_viernes = (4 - hoy.weekday() + 7) % 7
+        if dias_para_viernes == 0: dias_para_viernes = 7 # Si hoy es viernes, salta al próximo
+        nueva_fecha = hoy + timedelta(days=dias_para_viernes)
+
+    nueva_fecha_str = nueva_fecha.strftime("%d/%m/%Y")
+
+    await query.edit_message_text(f"⚙️ Moviendo rutina del {fecha_origen} al {nueva_fecha_str}...")
 
     try:
         registros = sheet.get_all_values()
         filas_a_modificar = []
-        
-        # Escaneo de base de datos
+
+        # Buscamos todas las filas con la fecha de origen que no estén hechas
         for i, fila in enumerate(registros):
-            if len(fila) > 2 and fila[0] == fecha_actual_str:
-                ya_hecho = False
-                # Si la S1 no está vacía y no es "0", asumimos que ya lo hizo
-                if len(fila) > 4 and fila[4].strip() not in ["", "0"]:
-                    ya_hecho = True
-                
-                # Si NO lo ha hecho, lo agregamos a la lista de "posponibles"
+            if len(fila) > 2 and fila[0] == fecha_origen:
+                ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
                 if not ya_hecho:
-                    filas_a_modificar.append(i + 1) # +1 porque en Sheets la fila 1 es el índice 1
+                    filas_a_modificar.append(i + 1)
 
-        if not filas_a_modificar:
-            await update.message.reply_text("🤷‍♂️ No tienes ejercicios pendientes para el día de hoy.")
-            return
-
-        await update.message.reply_text(f"⚙️ Encontré {len(filas_a_modificar)} ejercicios. Moviendo al {fecha_manana_str}...")
-
-        # Inyección de nueva fecha en la Columna A (Fecha)
+        # Disparo en ráfaga a Google Sheets
         for num_fila in filas_a_modificar:
-            sheet.update_acell(f'A{num_fila}', fecha_manana_str)
+            sheet.update_acell(f'A{num_fila}', nueva_fecha_str)
 
-        await update.message.reply_text(
-            f"✅ *¡Reagendamiento Exitoso!*\n\n"
-            f"Tu rutina ha sido trasladada al *{fecha_manana_str}*.\nDescansa y recupérate.", 
+        await query.edit_message_text(
+            f"✅ *¡Operación Táctica Exitosa!*\n\n"
+            f"Tu rutina del {fecha_origen} ha sido trasladada oficialmente al *{nueva_fecha_str}*.\n"
+            "Data Warehouse actualizado.",
             parse_mode="Markdown"
         )
-
     except Exception as e:
-        await update.message.reply_text(f"❌ Error al conectar con Google Sheets: {e}")
+        await query.edit_message_text(f"❌ Error crítico al escribir en Google Sheets: {e}")
+
+    return ConversationHandler.END
+
 
 # --- INICIO DEL FLUJO DE ENTRENAMIENTO (/rutina) ---
 
@@ -445,7 +536,7 @@ async def guardar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 @requiere_admin
 async def cancelar_conversacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Operación cancelada. Usa /rutina o /medidas cuando estés listo.")
+    await update.message.reply_text("Operación cancelada. Usa /rutina, /medidas o /posponer cuando estés listo.")
     return ConversationHandler.END
 
 
@@ -467,7 +558,7 @@ def main():
     )
     app.add_handler(conv_rutina)
 
-    # 2. LA MÁQUINA DE ESTADOS (Módulo de Biometría - Aislado)
+    # 2. LA MÁQUINA DE ESTADOS (Módulo de Biometría)
     conv_mediciones = ConversationHandler(
         entry_points=[CommandHandler('medidas', iniciar_mediciones)],
         states={
@@ -477,8 +568,16 @@ def main():
     )
     app.add_handler(conv_mediciones)
 
-    # 3. COMANDOS DIRECTOS (Nueva Inyección: Posponer)
-    app.add_handler(CommandHandler("posponer", posponer_rutina))
+    # 3. LA MÁQUINA DE ESTADOS (Nuevo Módulo Logístico: Posponer)
+    conv_posponer = ConversationHandler(
+        entry_points=[CommandHandler('posponer', iniciar_posponer)],
+        states={
+            POSPONER_ORIGEN: [CallbackQueryHandler(origen_posponer)],
+            POSPONER_DESTINO: [CallbackQueryHandler(destino_posponer)]
+        },
+        fallbacks=[CommandHandler('cancelar', cancelar_conversacion)]
+    )
+    app.add_handler(conv_posponer)
 
     # 4. COMANDOS BÁSICOS 
     app.add_handler(CommandHandler("start", mostrar_ayuda))
