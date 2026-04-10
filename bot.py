@@ -50,12 +50,15 @@ scopes = ["https://www.googleapis.com/auth/spreadsheets"]
 creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
 client = gspread.authorize(creds)
 
+# Conectamos a las dos pestañas de tu Data Warehouse
 sheet = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").worksheet("TESTbot")
+sheet_mediciones = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").worksheet("Mediciones")
 
 # ==========================================
 # FASE 2: ESTADOS DE LA CONVERSACIÓN
 # ==========================================
-SELECCIONANDO, INGRESANDO_DATOS = range(2)
+# Añadimos un tercer estado para el nuevo túnel de biometría
+SELECCIONANDO, INGRESANDO_DATOS, INGRESANDO_MEDICIONES = range(3)
 
 # ==========================================
 # FASE 2.5: MOTOR FORENSE (HISTÓRICO Y PREVENCIÓN)
@@ -83,7 +86,6 @@ def extract_real_weight_bot(peso_proyectado_str, nota_str):
 
 def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
     """Busca hacia atrás la última sesión efectiva, saltándose fechas de descarga completas."""
-    # 1. Crear Lista Negra de fechas de descarga (Propagación por fecha)
     fechas_descarga = set()
     for fila in registros:
         if len(fila) > 8 and 'descarga' in fila[8].lower():
@@ -92,37 +94,33 @@ def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
     try:
         current_date = datetime.strptime(current_date_str, "%d/%m/%Y")
     except ValueError:
-        return "" # Falla de seguridad si la fecha no es parseable
+        return "" 
     
     ultimo_registro = None
     
-    # 2. Escaneo Forense Hacia Atrás
     for fila in registros:
         if len(fila) > 2 and fila[2].strip() == target_ejercicio.strip():
             try:
                 fila_date = datetime.strptime(fila[0], "%d/%m/%Y")
-                # Filtro Pitbull: Debe ser en el pasado Y la fecha no puede estar en la lista negra
                 if fila_date < current_date and fila[0] not in fechas_descarga:
                     ultimo_registro = fila
             except ValueError:
                 continue
                 
-    # 3. Formateo de Salida
     if ultimo_registro:
-        fecha_valida = ultimo_registro[0][:5] # Extraer solo DD/MM para ahorrar espacio
+        fecha_valida = ultimo_registro[0][:5] 
         reps = ultimo_registro[4] if len(ultimo_registro) > 4 and ultimo_registro[4].strip() else "0"
         peso_proy = ultimo_registro[7] if len(ultimo_registro) > 7 else "0"
         nota = ultimo_registro[8] if len(ultimo_registro) > 8 else ""
         
         peso_real = extract_real_weight_bot(peso_proy, nota)
         
-        # Limpieza visual: quitar decimales si es un peso entero (ej: 30.0 -> 30)
         if float(peso_real).is_integer():
             peso_real = int(peso_real)
             
         return f"\n_🕰️ Último válido ({fecha_valida}): {reps} reps x {peso_real} kg_"
     
-    return "" # Si no hay historial válido
+    return "" 
 
 # ==========================================
 # FASE 3: LÓGICA DEL BOT (UX Y NAVEGACIÓN)
@@ -130,28 +128,26 @@ def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
 
 @requiere_admin
 async def mostrar_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mensaje de bienvenida oficial."""
+    """Mensaje de bienvenida oficial actualizado con el nuevo comando."""
     mensaje = (
-        "🤖 *¡Sistema de Entrenamiento Interactivo!*\n\n"
-        "👉 Toca o escribe: /rutina para ver tus ejercicios de hoy y registrarlos con un par de clics."
+        "🤖 *¡Sistema de Comando Heavy Duty!*\n\n"
+        "👉 Toca /rutina para iniciar tu entrenamiento.\n"
+        "👉 Toca /medidas para registrar tu biometría corporal."
     )
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 @requiere_admin
 async def educar_usuario(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Atrapalotodo global: Atrapa comandos huérfanos (/cancelar, /heavy) o textos (hola)."""
-    mensaje = "⚠️ *Comando o texto no reconocido.*\n\n👉 Por favor, usa el comando /rutina para interactuar con tu planificación."
+    mensaje = "⚠️ *Comando no reconocido.*\n\n👉 Usa /rutina para entrenar o /medidas para biometría."
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Atrapalotodo para botones zombis de sesiones anteriores."""
     query = update.callback_query
-    # query.answer detiene el circulito de carga en Telegram. show_alert lanza un pop-up.
     await query.answer("Esta botonera ha expirado ❌", show_alert=True)
     await query.message.reply_text("⚠️ *Botón Expirado*\nEse menú es antiguo o el bot se reinició. Escribe /rutina para generar uno nuevo.", parse_mode="Markdown")
 
 
-# --- INICIO DEL FLUJO DE TRABAJO (MÁQUINA DE ESTADOS) ---
+# --- INICIO DEL FLUJO DE ENTRENAMIENTO (/rutina) ---
 
 @requiere_admin
 async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -162,10 +158,9 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         message_obj = update.message
 
-    # Guardamos la fecha actual matemática para poder comparar después
     fecha_actual_dt = datetime.now()
     fecha_actual_str = fecha_actual_dt.strftime("%d/%m/%Y")
-    context.user_data['fecha_actual'] = fecha_actual_str # Guardada para el auto-avance
+    context.user_data['fecha_actual'] = fecha_actual_str 
     
     await message_obj.reply_text(f"⏳ Buscando tu planificación del {fecha_actual_str}...")
 
@@ -192,29 +187,24 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ya_hecho = True
                 
                 icono = "✅" if ya_hecho else "⏳"
-                # Descompresión selectiva para Viewport móvil (evitar text-wrap asimétrico)
                 texto_rutina += f"{icono} *{ejercicio}*\n🎯 Meta: {meta_reps} | {meta_peso}\n📝 Notas: {nota_plan}\n\n"
 
-                # Lógica Linear Stepper: Encontrar el primer vacío
                 if not ya_hecho and primer_pendiente_idx is None:
                     todos_hechos = False
                     primer_pendiente_idx = i
                     primer_pendiente_nombre = ejercicio
 
-        # NUEVA LÓGICA: Si no hay entrenamiento hoy, buscar el próximo
         if not tiene_entrenamiento_hoy:
             proxima_fecha = None
             for fila in registros:
                 if len(fila) > 0:
                     try:
-                        # Convertimos el texto del Excel a tiempo matemático
                         fecha_fila = datetime.strptime(fila[0], "%d/%m/%Y")
-                        # Preguntamos si la fecha de la fila es MAYOR que la de hoy
                         if fecha_fila.date() > fecha_actual_dt.date():
                             proxima_fecha = fila[0]
-                            break # Encontramos el más cercano, detenemos la búsqueda
+                            break 
                     except ValueError:
-                        continue # Si hay una fila vacía o con texto raro en vez de fecha, la ignoramos
+                        continue 
             
             if proxima_fecha:
                 await message_obj.reply_text(f"🤷‍♂️ Descanso. No hay nada planificado para hoy.\n🗓️ *Tu próximo entrenamiento es el:* {proxima_fecha}", parse_mode="Markdown")
@@ -223,7 +213,6 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
             return ConversationHandler.END
 
-        # Si hay rutinas hoy, construimos la botonera de 2 botones máximo
         if not todos_hechos:
             botones.append([InlineKeyboardButton(f"▶️ {primer_pendiente_nombre}", callback_data=str(primer_pendiente_idx))])
         
@@ -260,11 +249,9 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     context.user_data['ejercicio_actual'] = ejercicio
 
-    # --- INYECCIÓN: MOTOR FORENSE ---
     fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
     historial_str = get_ultimo_registro_valido(registros, ejercicio, fecha_actual_str)
 
-    # Compresión Extrema para Viewport de iOS (Mantenida intacta)
     mensaje = (
         f"📍 *EJERCICIO:* {ejercicio} 🎯 *META:* {meta_reps} | {meta_peso}\n"
         f"📝 *NOTA:* {nota_plan}{historial_str}\n\n"
@@ -308,9 +295,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(f"✅ ¡Guardado perfecto!")
         
-        # --- LÓGICA DE AUTO-AVANCE (LOCMOTORA) ---
         fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
-        
         registros = sheet.get_all_values()
         siguiente_idx = None
         
@@ -319,10 +304,9 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 ya_hecho = len(fila_datos) > 4 and fila_datos[4].strip() not in ["", "0"]
                 if not ya_hecho:
                     siguiente_idx = i
-                    break # Encontramos el próximo ejercicio pendiente
+                    break 
                     
         if siguiente_idx is not None:
-            # Lanzamos el túnel de visión del siguiente ejercicio
             fila_datos = registros[siguiente_idx]
             sig_ejercicio = fila_datos[2]
             sig_meta_reps = fila_datos[3] if len(fila_datos) > 3 else "-"
@@ -332,12 +316,10 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['fila_actual'] = siguiente_idx + 1
             context.user_data['ejercicio_actual'] = sig_ejercicio
             
-            # --- INYECCIÓN: MOTOR FORENSE (LOCOMOTORA) ---
             historial_str = get_ultimo_registro_valido(registros, sig_ejercicio, fecha_actual_str)
 
             await update.message.reply_text(f"⏳ Buscando el siguiente ejercicio de tu planificación del {fecha_actual_str}...")
             
-            # Compresión Extrema para Viewport de iOS (Mantenida intacta)
             mensaje = (
                 f"📍 *EJERCICIO:* {sig_ejercicio} 🎯 *META:* {sig_meta_reps} | {sig_meta_peso}\n"
                 f"📝 *NOTA:* {sig_nota_plan}{historial_str}\n\n"
@@ -347,16 +329,68 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(mensaje, parse_mode="Markdown")
             return INGRESANDO_DATOS
         else:
-            # Si no hay más ejercicios, mostramos el resumen final invirtiendo hacia mostrar_rutina
             return await mostrar_rutina(update, context)
 
     except Exception as e:
         await update.message.reply_text(f"❌ Error al guardar en Sheets: {e}")
         return ConversationHandler.END
 
+
+# --- INICIO DEL FLUJO DE BIOMETRÍA (/medidas) ---
+
+@requiere_admin
+async def iniciar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Activa el módulo de recolección de métricas corporales."""
+    mensaje = (
+        "📏 *MÓDULO DE BIOMETRÍA*\n\n"
+        "Ingresa tus 9 métricas separadas por comas en este orden exacto:\n"
+        "`Peso, Cuello, Pecho, Cintura, Cadera, BrazoI, BrazoD, MusloI, MusloD`\n\n"
+        "💡 *Ejemplo de copiado rápido:*\n"
+        "`98.5, 42, 115, 108, 107, 33, 33, 60.5, 62`\n\n"
+        "✍️ Ingresa los datos ahora (o /cancelar para abortar):"
+    )
+    await update.message.reply_text(mensaje, parse_mode="Markdown")
+    return INGRESANDO_MEDICIONES
+
+@requiere_admin
+async def guardar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Recibe la data, valida la longitud y la anexa a la hoja Mediciones."""
+    texto = update.message.text.strip()
+    
+    if texto.lower() == "/cancelar":
+        await update.message.reply_text("📏 Operación de biometría cancelada.")
+        return ConversationHandler.END
+
+    partes = [p.strip() for p in texto.split(",")]
+    
+    # Validación estricta: Deben ser exactamente 9 valores (excluyendo la fecha)
+    if len(partes) != 9:
+        await update.message.reply_text(
+            f"❌ *Error de Formato:*\nEsperaba 9 datos, pero detecté {len(partes)}.\n"
+            "Asegúrate de separar todo con comas. Intenta de nuevo:"
+        )
+        return INGRESANDO_MEDICIONES
+
+    # Generamos la fecha/hora exacta de la ingesta
+    ahora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    
+    # Construimos la fila: [Fecha, Peso, Cuello...]
+    fila_nueva = [ahora] + partes
+
+    await update.message.reply_text("⏳ Sincronizando biometría con el Data Warehouse...")
+
+    try:
+        # append_row inyecta los datos en la primera fila vacía al final del documento
+        sheet_mediciones.append_row(fila_nueva)
+        await update.message.reply_text("✅ ¡Métricas corporales guardadas exitosamente!")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al guardar en Sheets: {e}")
+
+    return ConversationHandler.END
+
 @requiere_admin
 async def cancelar_conversacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Operación cancelada. Usa /rutina cuando estés listo.")
+    await update.message.reply_text("Operación cancelada. Usa /rutina o /medidas cuando estés listo.")
     return ConversationHandler.END
 
 
@@ -367,8 +401,8 @@ def main():
     token = os.getenv("TELEGRAM_TOKEN")
     app = Application.builder().token(token).build()
 
-    # 1. LA MÁQUINA DE ESTADOS (Lo más importante primero)
-    conv_handler = ConversationHandler(
+    # 1. LA MÁQUINA DE ESTADOS (Módulo de Entrenamiento)
+    conv_rutina = ConversationHandler(
         entry_points=[CommandHandler('rutina', mostrar_rutina)],
         states={
             SELECCIONANDO: [CallbackQueryHandler(boton_tocado)],
@@ -376,16 +410,26 @@ def main():
         },
         fallbacks=[CommandHandler('cancelar', cancelar_conversacion), CommandHandler('rutina', mostrar_rutina)]
     )
-    app.add_handler(conv_handler)
+    app.add_handler(conv_rutina)
 
-    # 2. COMANDOS BÁSICOS 
+    # 2. LA MÁQUINA DE ESTADOS (Módulo de Biometría - Aislado)
+    conv_mediciones = ConversationHandler(
+        entry_points=[CommandHandler('medidas', iniciar_mediciones)],
+        states={
+            INGRESANDO_MEDICIONES: [MessageHandler(filters.TEXT & ~filters.COMMAND, guardar_mediciones)]
+        },
+        fallbacks=[CommandHandler('cancelar', cancelar_conversacion), CommandHandler('medidas', iniciar_mediciones)]
+    )
+    app.add_handler(conv_mediciones)
+
+    # 3. COMANDOS BÁSICOS 
     app.add_handler(CommandHandler("start", mostrar_ayuda))
     app.add_handler(CommandHandler("ayuda", mostrar_ayuda))
     
-    # 3. ATRAPALOTODO DE BOTONES ZOMBIS (Debe ir fuera del ConversationHandler)
+    # 4. ATRAPALOTODO DE BOTONES ZOMBIS
     app.add_handler(CallbackQueryHandler(boton_expirado))
 
-    # 4. ATRAPALOTODO GLOBAL (Mensajes, comandos basura, etc.)
+    # 5. ATRAPALOTODO GLOBAL
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, educar_usuario))
 
     # --- LÍNEA AGREGADA 2 (PARA RENDER) ---
