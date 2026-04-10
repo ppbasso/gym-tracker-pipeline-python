@@ -1,7 +1,7 @@
 import os
 import re # <--- AÑADIDA: Librería para buscar patrones de texto (Regex)
 from functools import wraps # <--- AÑADIDA: Para crear el guardia de seguridad (Decorador)
-from datetime import datetime
+from datetime import datetime, timedelta # <--- AÑADIDA: timedelta para manipulación de fechas
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
 import gspread
@@ -132,7 +132,8 @@ async def mostrar_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
     mensaje = (
         "🤖 *¡Sistema de Comando Heavy Duty!*\n\n"
         "👉 Toca /rutina para iniciar tu entrenamiento.\n"
-        "👉 Toca /medidas para registrar tu biometría corporal."
+        "👉 Toca /medidas para registrar tu biometría corporal.\n"
+        "👉 Toca /posponer para mover el entreno de hoy a mañana."
     )
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
@@ -146,6 +147,54 @@ async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("Esta botonera ha expirado ❌", show_alert=True)
     await query.message.reply_text("⚠️ *Botón Expirado*\nEse menú es antiguo o el bot se reinició. Escribe /rutina para generar uno nuevo.", parse_mode="Markdown")
 
+# --- COMANDO DE OPERACIÓN LOGÍSTICA: /posponer ---
+
+@requiere_admin
+async def posponer_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Escanea los ejercicios de hoy que NO están hechos y los mueve a mañana."""
+    fecha_actual_dt = datetime.now()
+    fecha_actual_str = fecha_actual_dt.strftime("%d/%m/%Y")
+    
+    # Calculamos el día de mañana usando matemáticas de tiempo
+    fecha_manana_dt = fecha_actual_dt + timedelta(days=1)
+    fecha_manana_str = fecha_manana_dt.strftime("%d/%m/%Y")
+
+    await update.message.reply_text(f"⏳ Evaluando tu agenda del {fecha_actual_str}...")
+
+    try:
+        registros = sheet.get_all_values()
+        filas_a_modificar = []
+        
+        # Escaneo de base de datos
+        for i, fila in enumerate(registros):
+            if len(fila) > 2 and fila[0] == fecha_actual_str:
+                ya_hecho = False
+                # Si la S1 no está vacía y no es "0", asumimos que ya lo hizo
+                if len(fila) > 4 and fila[4].strip() not in ["", "0"]:
+                    ya_hecho = True
+                
+                # Si NO lo ha hecho, lo agregamos a la lista de "posponibles"
+                if not ya_hecho:
+                    filas_a_modificar.append(i + 1) # +1 porque en Sheets la fila 1 es el índice 1
+
+        if not filas_a_modificar:
+            await update.message.reply_text("🤷‍♂️ No tienes ejercicios pendientes para el día de hoy.")
+            return
+
+        await update.message.reply_text(f"⚙️ Encontré {len(filas_a_modificar)} ejercicios. Moviendo al {fecha_manana_str}...")
+
+        # Inyección de nueva fecha en la Columna A (Fecha)
+        for num_fila in filas_a_modificar:
+            sheet.update_acell(f'A{num_fila}', fecha_manana_str)
+
+        await update.message.reply_text(
+            f"✅ *¡Reagendamiento Exitoso!*\n\n"
+            f"Tu rutina ha sido trasladada al *{fecha_manana_str}*.\nDescansa y recupérate.", 
+            parse_mode="Markdown"
+        )
+
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error al conectar con Google Sheets: {e}")
 
 # --- INICIO DEL FLUJO DE ENTRENAMIENTO (/rutina) ---
 
@@ -428,14 +477,17 @@ def main():
     )
     app.add_handler(conv_mediciones)
 
-    # 3. COMANDOS BÁSICOS 
+    # 3. COMANDOS DIRECTOS (Nueva Inyección: Posponer)
+    app.add_handler(CommandHandler("posponer", posponer_rutina))
+
+    # 4. COMANDOS BÁSICOS 
     app.add_handler(CommandHandler("start", mostrar_ayuda))
     app.add_handler(CommandHandler("ayuda", mostrar_ayuda))
     
-    # 4. ATRAPALOTODO DE BOTONES ZOMBIS
+    # 5. ATRAPALOTODO DE BOTONES ZOMBIS
     app.add_handler(CallbackQueryHandler(boton_expirado))
 
-    # 5. ATRAPALOTODO GLOBAL
+    # 6. ATRAPALOTODO GLOBAL
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, educar_usuario))
 
     # --- LÍNEA AGREGADA 2 (PARA RENDER) ---
