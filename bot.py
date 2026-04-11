@@ -542,11 +542,73 @@ async def cancelar_conversacion(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 # ==========================================
+# FASE 3.5: MOTOR DE NOTIFICACIONES PUSH (JOBQUEUE)
+# ==========================================
+async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Función silenciosa que corre cada hora en el servidor.
+    Se ajusta a la zona horaria de Chile (UTC-4) para no fallar en Render.
+    """
+    if not ADMIN_ID:
+        return # Si no hay ID configurado, aborta para no causar errores
+
+    # Transformación Estricta de Zona Horaria (Render está en UTC)
+    # Santiago de Chile en horario estándar es UTC-4.
+    ahora_chile = datetime.utcnow() - timedelta(hours=4)
+    hora_actual = ahora_chile.hour
+
+    # Compuerta Táctica: Solo consultamos Google Sheets en las horas exactas de las alarmas
+    # Esto salva tu límite de API de Google (Rate Limit).
+    if hora_actual not in [9, 16, 20]:
+        return
+
+    try:
+        registros = sheet.get_all_values()
+        hoy_str = ahora_chile.strftime("%d/%m/%Y")
+        manana_str = (ahora_chile + timedelta(days=1)).strftime("%d/%m/%Y")
+
+        entrena_hoy = False
+        entrena_manana = False
+        
+        # Leemos el Excel para ver si hoy o mañana hay filas de entrenamiento sin completar
+        for fila in registros:
+            if len(fila) > 2:
+                ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
+                if not ya_hecho:
+                    if fila[0] == hoy_str:
+                        entrena_hoy = True
+                    elif fila[0] == manana_str:
+                        entrena_manana = True
+
+        # REGLA 1: Escudo de Recuperación (9:00 AM)
+        if hora_actual == 9 and not entrena_hoy:
+            msg = "🛡️ *Comando HD:* Hoy es día de recuperación obligatoria. Mantente alejado de las pesas. El crecimiento ocurre fuera del gimnasio, no adentro."
+            await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+
+        # REGLA 2: Ignición T-2 (16:00 hrs)
+        elif hora_actual == 16 and entrena_hoy:
+            msg = "🔥 *T-120 MINUTOS PARA IMPACTO.*\n\nHoy toca acción. Tu rutina está cargada en el sistema. Activa el pre-entreno mental y tu SNC."
+            await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+
+        # REGLA 3: Preparación T-12 (20:00 hrs del día anterior)
+        elif hora_actual == 20 and entrena_manana:
+            msg = "⚡ *ALERTA DE PREPARACIÓN.*\n\nMañana hay operación de levantamiento pesada. Prepara tu bolso, la comida y duerme al menos 7 horas para resetear tu sistema nervioso."
+            await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+
+    except Exception as e:
+        print(f"Error silencioso en motor de notificaciones: {e}")
+
+
+# ==========================================
 # FASE 4: ARRANQUE DEL SERVIDOR
 # ==========================================
 def main():
     token = os.getenv("TELEGRAM_TOKEN")
     app = Application.builder().token(token).build()
+
+    # --- INYECCIÓN JOBQUEUE ---
+    # Corre cada 3600 segundos (1 hora), empezando 10 segundos después de encender el bot.
+    app.job_queue.run_repeating(motor_notificaciones, interval=3600, first=10)
 
     # 1. LA MÁQUINA DE ESTADOS (Módulo de Entrenamiento)
     conv_rutina = ConversationHandler(
