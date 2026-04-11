@@ -125,7 +125,9 @@ def process_data(df):
         futuras = df_ej[df_ej['Fecha'] >= hoy_simulado]['Fecha']
         prox_fecha = futuras.min() if not futuras.empty else pd.Timestamp('2099-12-31')
         dict_status[ej] = {
-            'activo': ultima_vez >= (hoy_simulado - pd.Timedelta(days=30)),
+            # --- NUEVA LÓGICA DE VIDA/MUERTE ---
+            # Un ejercicio es activo si y solo si tiene una fecha programada en el futuro.
+            'activo': prox_fecha != pd.Timestamp('2099-12-31'),
             'prox_fecha': prox_fecha
         }
         
