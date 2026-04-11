@@ -367,7 +367,8 @@ else:
         "Remo a Una Mano con Mancuerna",
         "Curl Biceps con Barra Recta",
         "Extension de Triceps con Mancuerna sobre cabeza", 
-        "Hammer Curl Biceps con Mancuernas Sentado"
+        "Hammer Curl Biceps con Mancuernas Sentado",
+        "Peso Muerto Rumano con Mancuernas"
     ]
     
     def render_modulo(lista_ejercicios):
