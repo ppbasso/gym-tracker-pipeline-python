@@ -559,7 +559,7 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
 
     # Compuerta Táctica: Solo consultamos Google Sheets en las horas exactas de las alarmas
     # Esto salva tu límite de API de Google (Rate Limit).
-    if hora_actual not in [9, 16, 20]:
+    if hora_actual not in [11, 19]:
         return
 
     try:
@@ -569,6 +569,7 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
 
         entrena_hoy = False
         entrena_manana = False
+        primer_ejercicio_manana = ""
         
         # Leemos el Excel para ver si hoy o mañana hay filas de entrenamiento sin completar
         for fila in registros:
@@ -579,20 +580,22 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
                         entrena_hoy = True
                     elif fila[0] == manana_str:
                         entrena_manana = True
+                        if not primer_ejercicio_manana:
+                            primer_ejercicio_manana = fila[2]
 
-        # REGLA 1: Escudo de Recuperación (9:00 AM)
-        if hora_actual == 9 and not entrena_hoy:
-            msg = "🛡️ *Comando HD:* Hoy es día de recuperación obligatoria. Mantente alejado de las pesas. El crecimiento ocurre fuera del gimnasio, no adentro."
+        # REGLA 1: Mañana a las 11:00 (Día de entrenamiento)
+        if hora_actual == 11 and entrena_hoy:
+            msg = "🔥 *ALERTA DE IGNICIÓN.*\n\nTienes entrenamiento a las 13:00. Activa el pre-entreno mental."
             await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
 
-        # REGLA 2: Ignición T-2 (16:00 hrs)
-        elif hora_actual == 16 and entrena_hoy:
-            msg = "🔥 *T-120 MINUTOS PARA IMPACTO.*\n\nHoy toca acción. Tu rutina está cargada en el sistema. Activa el pre-entreno mental y tu SNC."
+        # REGLA 2: Mañana a las 11:00 (Día de descanso)
+        elif hora_actual == 11 and not entrena_hoy:
+            msg = "🛡️ *ESCUDO DE RECUPERACIÓN.*\n\nHoy es día de descanso. Mantente alejado de las pesas. El crecimiento ocurre fuera del gimnasio, no adentro."
             await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
 
-        # REGLA 3: Preparación T-12 (20:00 hrs del día anterior)
-        elif hora_actual == 20 and entrena_manana:
-            msg = "⚡ *ALERTA DE PREPARACIÓN.*\n\nMañana hay operación de levantamiento pesada. Prepara tu bolso, la comida y duerme al menos 7 horas para resetear tu sistema nervioso."
+        # REGLA 3: Noche anterior a las 19:00
+        elif hora_actual == 19 and entrena_manana:
+            msg = f"⚡ *ALERTA DE PREPARACIÓN.*\n\nMañana te toca entrenamiento (Iniciando con: {primer_ejercicio_manana}). Prepara tu bolso, la comida y duerme al menos 7 horas."
             await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
 
     except Exception as e:
