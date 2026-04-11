@@ -136,29 +136,37 @@ def process_data(df):
 
 # --- CORRECCIÓN: RED FINA DE CATEGORIZACIÓN (ANTIFALSOS POSITIVOS) ---
 def get_grupo(ej):
-    n = ej.lower()
+    # DICCIONARIO ABSOLUTO (Mapeo Estricto 1 a 1)
+    DICCIONARIO_BIOMECANICO = {
+        # PECHO
+        "Press con Mancuernas Plano": "Pecho",
+        "Press Inclinado con Mancuernas": "Pecho",
+        
+        # ESPALDA
+        "Remo con Barra": "Espalda",
+        "Remo a Una Mano con Mancuerna": "Espalda",
+        "Remo Inclinado con Mancuernas": "Espalda",
+        
+        # HOMBROS
+        "Press de Hombro con Mancuernas Sentado": "Hombros",
+        "Shrugs (Encogimientos) Sentado": "Hombros",
+        "Elevaciones Laterales con Mancuernas": "Hombros",
+        "Pájaro (Vuelos Posteriores)": "Hombros",
+        
+        # BRAZOS
+        "Curl Biceps con Barra Recta": "Brazos",
+        "Extension de Triceps con Mancuerna sobre cabeza": "Brazos",
+        "Hammer Curl Biceps con Mancuernas Sentado": "Brazos",
+        "Extension de Triceps con Mancuernas": "Brazos",
+        "Curl Bicep Inclinado con Mancuernas": "Brazos",
+        "Curl Bicep Concentrado": "Brazos",
+        
+        # PIERNAS
+        "Goblet Squat con Mancuerna": "Piernas",
+        "Peso Muerto Rumano con Mancuernas": "Piernas"
+    }
     
-    # 1. Filtros de Pierna (Evaluación Prioritaria)
-    if any(x in n for x in ['squat', 'peso muerto', 'prensa', 'femoral', 'gemelo', 'pantorrilla']): 
-        return 'Piernas'
-        
-    # 2. Filtros de Hombro
-    if any(x in n for x in ['lateral', 'pájaro', 'shrug', 'press militar']): 
-        return 'Hombros'
-        
-    # 3. Filtros de Espalda
-    if any(x in n for x in ['remo', 'espalda', 'pulldown', 'dominada']): 
-        return 'Espalda'
-        
-    # 4. Filtros de Brazos
-    if any(x in n for x in ['curl', 'triceps', 'tríceps', 'skull', 'bicep', 'bícep']): 
-        return 'Brazos'
-        
-    # 5. Filtros de Pecho (Se evalúa al final para evitar atrapar "Press Militar")
-    if any(x in n for x in ['press', 'pecho', 'banca', 'aperturas']): 
-        return 'Pecho'
-        
-    return 'Otros'
+    return DICCIONARIO_BIOMECANICO.get(ej, "Otros")
 
 
 # ==========================================
