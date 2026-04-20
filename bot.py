@@ -123,6 +123,17 @@ def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
     
     return "" 
 
+
+# --- TODO: DEUDA TÉCNICA - MIGRAR A BD ---
+# Diccionario táctico (Hotfix) para inyectar rutinas de calentamiento específicas en la UX.
+WARMUP_HOTFIX = {
+    "Press con Mancuernas Plano": "1x15 16KG",
+    "Goblet Squat con Mancuerna": "1x20 Peso Corporal",
+    "Remo con Barra": "1x20 20KG, 1x6 60KG"
+}
+# -----------------------------------------
+
+
 # ==========================================
 # FASE 3: LÓGICA DEL BOT (UX Y NAVEGACIÓN)
 # ==========================================
@@ -393,11 +404,14 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
     historial_str = get_ultimo_registro_valido(registros, ejercicio, fecha_actual_str)
 
+    # Inyección Hotfix de Warmup
+    warmup_str = f"\n* WARMUP: {WARMUP_HOTFIX[ejercicio]}" if ejercicio in WARMUP_HOTFIX else ""
+
     mensaje = (
         f"📍 *EJERCICIO:* {ejercicio} 🎯 *META:* {meta_reps} | {meta_peso}\n"
-        f"📝 *NOTA:* {nota_plan}{historial_str}\n\n"
-        "Reps, Peso, Calentamiento, Obs *(Ej: 12, 30, 2 series, contracción brutal)*\n"
-        "✍️ Ingresa datos ahora (o /cancelar para volver):"
+        f"📝 *NOTA:* {nota_plan}{historial_str}{warmup_str}\n"
+        "✍️ Ingresa datos (o /cancelar para volver):\n"
+        "   Calentamiento, Peso, Reps, Obs"
     )
     await query.edit_message_text(mensaje, parse_mode="Markdown")
     
@@ -414,10 +428,11 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     partes = texto.split(",", 3) 
     
     if len(partes) != 4:
-        await update.message.reply_text("❌ Formato incorrecto. Necesito 4 datos (Reps, Peso, Calentamiento, Obs).\nIntenta de nuevo:")
+        await update.message.reply_text("❌ Formato incorrecto. Necesito 4 datos (Calentamiento, Peso, Reps, Obs).\nIntenta de nuevo:")
         return INGRESANDO_DATOS 
 
-    reps, peso, calentamiento, observacion = [p.strip() for p in partes]
+    # Inversión de lógica Hotfix (Calentamiento va primero)
+    calentamiento, peso, reps, observacion = [p.strip() for p in partes]
     
     fila = context.user_data['fila_actual']
     ejercicio = context.user_data['ejercicio_actual']
@@ -459,13 +474,16 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             historial_str = get_ultimo_registro_valido(registros, sig_ejercicio, fecha_actual_str)
 
+            # Inyección Hotfix de Warmup
+            warmup_str = f"\n* WARMUP: {WARMUP_HOTFIX[sig_ejercicio]}" if sig_ejercicio in WARMUP_HOTFIX else ""
+
             await update.message.reply_text(f"⏳ Buscando el siguiente ejercicio de tu planificación del {fecha_actual_str}...")
             
             mensaje = (
                 f"📍 *EJERCICIO:* {sig_ejercicio} 🎯 *META:* {sig_meta_reps} | {sig_meta_peso}\n"
-                f"📝 *NOTA:* {sig_nota_plan}{historial_str}\n\n"
-                "Reps, Peso, Calentamiento, Obs *(Ej: 12, 30, 2 series, contracción brutal)*\n"
-                "✍️ Ingresa datos ahora (o /cancelar para volver):"
+                f"📝 *NOTA:* {sig_nota_plan}{historial_str}{warmup_str}\n"
+                "✍️ Ingresa datos (o /cancelar para volver):\n"
+                "   Calentamiento, Peso, Reps, Obs"
             )
             await update.message.reply_text(mensaje, parse_mode="Markdown")
             return INGRESANDO_DATOS
