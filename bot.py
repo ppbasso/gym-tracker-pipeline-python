@@ -326,7 +326,7 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
         primer_pendiente_idx = None
         primer_pendiente_nombre = None
 
-        for i, fila in enumerate(registros): # <--- CORRECCIÓN DEL SYNTAX ERROR AQUÍ
+        for i, fila in enumerate(registros):
             if len(fila) > 2 and fila[0] == fecha_actual_str:
                 tiene_entrenamiento_hoy = True
                 ejercicio = fila[2]
@@ -404,8 +404,8 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
     historial_str = get_ultimo_registro_valido(registros, ejercicio, fecha_actual_str)
 
-    # Inyección Hotfix de Warmup
-    warmup_str = f"\n* WARMUP: {WARMUP_HOTFIX[ejercicio]}" if ejercicio in WARMUP_HOTFIX else ""
+    # Inyección Hotfix de Warmup (Con Emoji para evitar error de parseo Markdown)
+    warmup_str = f"\n🔥 WARMUP: {WARMUP_HOTFIX[ejercicio]}" if ejercicio in WARMUP_HOTFIX else ""
 
     mensaje = (
         f"📍 *EJERCICIO:* {ejercicio} 🎯 *META:* {meta_reps} | {meta_peso}\n"
@@ -474,8 +474,8 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             historial_str = get_ultimo_registro_valido(registros, sig_ejercicio, fecha_actual_str)
 
-            # Inyección Hotfix de Warmup
-            warmup_str = f"\n* WARMUP: {WARMUP_HOTFIX[sig_ejercicio]}" if sig_ejercicio in WARMUP_HOTFIX else ""
+            # Inyección Hotfix de Warmup (Con Emoji para evitar error de parseo Markdown)
+            warmup_str = f"\n🔥 WARMUP: {WARMUP_HOTFIX[sig_ejercicio]}" if sig_ejercicio in WARMUP_HOTFIX else ""
 
             await update.message.reply_text(f"⏳ Buscando el siguiente ejercicio de tu planificación del {fecha_actual_str}...")
             
