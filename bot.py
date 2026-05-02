@@ -66,7 +66,18 @@ SELECCIONANDO, INGRESANDO_DATOS, INGRESANDO_MEDICIONES, POSPONER_ORIGEN, POSPONE
 # ==========================================
 def acortar_nombre(nombre):
     """Función táctica para limpiar texto en pantallas pequeñas."""
-    return nombre.replace(" con Mancuernas", " [M] 🦾").replace(" con Mancuerna", " [M] 🦾").replace(" con Barra", " [B] 🏋️")
+    # 1. Elimina posiciones del banco (ej: "(4)", "(7)") visualmente
+    nombre_limpio = re.sub(r'\s*\(\d+\)', '', nombre).strip()
+    
+    # 2. Reemplazos tácticos de lectura
+    if "Press con Mancuernas Plano" in nombre_limpio:
+        return "Press Plano [M] 🦾"
+    
+    nombre_limpio = nombre_limpio.replace(" con Mancuernas", " [M] 🦾")
+    nombre_limpio = nombre_limpio.replace(" con Mancuerna", " [M] 🦾")
+    nombre_limpio = nombre_limpio.replace(" con Barra", " [B] 🏋️")
+    
+    return nombre_limpio
 
 def extract_real_weight_bot(peso_proyectado_str, nota_str):
     """Extrae el peso real levantado usando la misma lógica ETL del dashboard."""
@@ -440,8 +451,10 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     historial_str = get_ultimo_registro_valido(registros, ejercicio, fecha_actual_str)
     warmup_str = f"\n🔥 {WARMUP_HOTFIX[ejercicio]}" if ejercicio in WARMUP_HOTFIX else ""
 
+    # PARCHADO: Salto de línea antes de 🎯 y remoción del "1x" extra.
     mensaje = (
-        f"📍 {ej_num}/{total_ejs} {ej_acortado} 🎯 1x{meta_reps} | {meta_peso}\n"
+        f"📍 {ej_num}/{total_ejs} {ej_acortado}\n"
+        f"🎯 {meta_reps} | {meta_peso}\n"
         f"📝 {nota_plan}{historial_str}{warmup_str}\n"
         "✍️ Ingresar o /cancelar:\n"
         "Calentamiento, Peso, Reps, Obs"
@@ -528,8 +541,10 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             historial_str = get_ultimo_registro_valido(registros, sig_ejercicio, fecha_actual_str)
             warmup_str = f"\n🔥 {WARMUP_HOTFIX[sig_ejercicio]}" if sig_ejercicio in WARMUP_HOTFIX else ""
 
+            # PARCHADO: Salto de línea antes de 🎯 y remoción del "1x" extra.
             mensaje = (
-                f"📍 {ej_num}/{total_ejs} {ej_acortado} 🎯 1x{meta_reps} | {meta_peso}\n"
+                f"📍 {ej_num}/{total_ejs} {ej_acortado}\n"
+                f"🎯 {meta_reps} | {meta_peso}\n"
                 f"📝 {nota_plan}{historial_str}{warmup_str}\n"
                 "✍️ Ingresar o /cancelar:\n"
                 "Calentamiento, Peso, Reps, Obs"
@@ -545,7 +560,8 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             minutos = int((datetime.now() - tiempo_inicio).total_seconds() / 60)
             if minutos < 1: minutos = 1
 
-            sumario = f"⏱️ Tiempo de entrenamiento: {minutos} Minutos.\n"
+            # PARCHADO: Nuevo UI del Sumario
+            sumario = f"⏱️🦾🏋️ Sesión: {minutos} Minutos.\n"
             
             for f in registros:
                 if len(f) > 8 and f[0] == fecha_actual_str:
@@ -563,7 +579,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         cal_str = m_cal.group(1).strip() if m_cal else ""
                         str_cal = f" 🔥 {cal_str}" if cal_str and cal_str.lower() not in ["0", "none", "", "no"] else ""
                         
-                        sumario += f"⏳ {ej_a} 1x{reps_r} {peso_str}kg{str_cal}\n"
+                        sumario += f"✅ {ej_a} 1x{reps_r} {peso_str}kg{str_cal}\n"
 
             if context.user_data.get('main_msg_id'):
                 await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=sumario, parse_mode="Markdown")
