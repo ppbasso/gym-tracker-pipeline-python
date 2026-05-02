@@ -62,8 +62,12 @@ sheet_mediciones = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda7
 SELECCIONANDO, INGRESANDO_DATOS, INGRESANDO_MEDICIONES, POSPONER_ORIGEN, POSPONER_DESTINO = range(5)
 
 # ==========================================
-# FASE 2.5: MOTOR FORENSE (HISTÓRICO Y PREVENCIÓN)
+# FASE 2.5: MOTOR FORENSE Y UX (MINIMALISMO)
 # ==========================================
+def acortar_nombre(nombre):
+    """Función táctica para limpiar texto en pantallas pequeñas."""
+    return nombre.replace(" con Mancuernas", " [M] 🦾").replace(" con Mancuerna", " [M] 🦾").replace(" con Barra", " [B] 🏋️")
+
 def extract_real_weight_bot(peso_proyectado_str, nota_str):
     """Extrae el peso real levantado usando la misma lógica ETL del dashboard."""
     base_w_str = str(peso_proyectado_str).lower().replace('kg', '').strip()
@@ -119,7 +123,8 @@ def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
         if float(peso_real).is_integer():
             peso_real = int(peso_real)
             
-        return f"\n_🕰️ Último válido ({fecha_valida}): {reps} reps x {peso_real} kg_"
+        # FORMATO MINIMALISTA V2.0
+        return f"\n🕰️ Últ.({fecha_valida}): {reps} reps x {peso_real} kg"
     
     return "" 
 
@@ -304,48 +309,64 @@ async def destino_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @requiere_admin
 async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query:
-        await query.answer()
-        message_obj = query.message
-    else:
-        message_obj = update.message
-
     fecha_actual_dt = datetime.now()
     fecha_actual_str = fecha_actual_dt.strftime("%d/%m/%Y")
     context.user_data['fecha_actual'] = fecha_actual_str 
-    
-    await message_obj.reply_text(f"⏳ Buscando tu planificación del {fecha_actual_str}...")
+
+    # --- MODO FANTASMA: Tracking del Mensaje Maestro ---
+    if not query and update.message and update.message.text == "/rutina":
+        # Disparo limpio desde cero. Limpiamos variables de sesiones viejas.
+        context.user_data.pop('tiempo_inicio', None)
+        reply = await update.message.reply_text(f"⏳ Buscando tu planificación del {fecha_actual_str}...")
+        context.user_data['main_msg_id'] = reply.message_id
+    elif query:
+        await query.answer()
+        await query.edit_message_text(f"⏳ Buscando tu planificación del {fecha_actual_str}...")
+    elif context.user_data.get('main_msg_id'):
+        # Retorno desde un error o cancelación (Editando el msg maestro)
+        try:
+            await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=context.user_data['main_msg_id'], text=f"⏳ Buscando tu planificación del {fecha_actual_str}...")
+        except: pass
 
     try:
         registros = sheet.get_all_values()
-        botones = []
-        texto_rutina = f"🏋️‍♂️ *RUTINA DE HOY ({fecha_actual_str})*\n\n"
         
         tiene_entrenamiento_hoy = False
         todos_hechos = True
         primer_pendiente_idx = None
         primer_pendiente_nombre = None
+        primer_ejercicio_dia = None
+        total_ejercicios = 0
+        ejercicios_hechos = 0
+        lista_visual = ""
 
+        # Escaneo y Análisis del Día
         for i, fila in enumerate(registros):
             if len(fila) > 2 and fila[0] == fecha_actual_str:
                 tiene_entrenamiento_hoy = True
+                total_ejercicios += 1
                 ejercicio = fila[2]
-                meta_reps = fila[3] if len(fila) > 3 else "-"
-                meta_peso = fila[7] if len(fila) > 7 else "-"
-                nota_plan = fila[8] if len(fila) > 8 else ""
+                
+                if not primer_ejercicio_dia: 
+                    primer_ejercicio_dia = ejercicio
 
                 ya_hecho = False
                 if len(fila) > 4 and fila[4].strip() not in ["", "0"]:
                     ya_hecho = True
+                    ejercicios_hechos += 1
                 
                 icono = "✅" if ya_hecho else "⏳"
-                texto_rutina += f"{icono} *{ejercicio}*\n🎯 Meta: {meta_reps} | {meta_peso}\n📝 Notas: {nota_plan}\n\n"
+                lista_visual += f"{icono} {acortar_nombre(ejercicio)}\n"
 
                 if not ya_hecho and primer_pendiente_idx is None:
                     todos_hechos = False
                     primer_pendiente_idx = i
                     primer_pendiente_nombre = ejercicio
 
+        context.user_data['total_ejercicios'] = total_ejercicios
+        context.user_data['ejercicios_hechos'] = ejercicios_hechos
+
+        # Manejo de Descansos
         if not tiene_entrenamiento_hoy:
             proxima_fecha = None
             for fila in registros:
@@ -355,28 +376,37 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         if fecha_fila.date() > fecha_actual_dt.date():
                             proxima_fecha = fila[0]
                             break 
-                    except ValueError:
-                        continue 
+                    except ValueError: continue 
             
-            if proxima_fecha:
-                await message_obj.reply_text(f"🤷‍♂️ Descanso. No hay nada planificado para hoy.\n🗓️ *Tu próximo entrenamiento es el:* {proxima_fecha}", parse_mode="Markdown")
-            else:
-                await message_obj.reply_text(f"🤷‍♂️ Descanso. Y no encontré más entrenamientos en el futuro de tu Excel.")
-                
+            msg_descanso = f"🤷‍♂️ Descanso. No hay nada planificado para hoy.\n🗓️ *Tu próximo entrenamiento es el:* {proxima_fecha}" if proxima_fecha else "🤷‍♂️ Descanso. No encontré más rutinas."
+            
+            if context.user_data.get('main_msg_id'):
+                await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=context.user_data['main_msg_id'], text=msg_descanso, parse_mode="Markdown")
             return ConversationHandler.END
 
-        if not todos_hechos:
-            botones.append([InlineKeyboardButton(f"▶️ {primer_pendiente_nombre}", callback_data=str(primer_pendiente_idx))])
+        # Título Dinámico (Alpha/Omega)
+        titulo_rutina = "🏋️‍♂️ RUTINA DE HOY"
+        if primer_ejercicio_dia:
+            if "Press con Mancuernas Plano" in primer_ejercicio_dia: titulo_rutina = "🐺 Rutina Alpha"
+            elif "Remo con Barra" in primer_ejercicio_dia: titulo_rutina = "Ω Rutina Omega"
+
+        texto_final = f"*{titulo_rutina}*\n📝 {total_ejercicios} Ejercicios\n\n{lista_visual}"
         
-        botones.append([InlineKeyboardButton("❌ Finalizar Entrenamiento", callback_data="cancelar")])
+        botones = []
+        if not todos_hechos:
+            botones.append([InlineKeyboardButton(f"▶️ Iniciar ({ejercicios_hechos + 1}/{total_ejercicios})", callback_data=str(primer_pendiente_idx))])
+        
+        botones.append([InlineKeyboardButton("❌ Cerrar", callback_data="cancelar")])
         reply_markup = InlineKeyboardMarkup(botones)
         
-        await message_obj.reply_text(texto_rutina, reply_markup=reply_markup, parse_mode="Markdown")
+        if context.user_data.get('main_msg_id'):
+            await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=context.user_data['main_msg_id'], text=texto_final, reply_markup=reply_markup, parse_mode="Markdown")
         
         return SELECCIONANDO
 
     except Exception as e:
-        await message_obj.reply_text(f"❌ Error al leer Google Sheets: {e}")
+        if context.user_data.get('main_msg_id'):
+            await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=context.user_data['main_msg_id'], text=f"❌ Error al leer Google Sheets: {e}")
         return ConversationHandler.END
 
 @requiere_admin
@@ -385,7 +415,7 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     if query.data == "cancelar":
-        await query.edit_message_text("💪 ¡Entrenamiento finalizado por hoy! Gran trabajo.")
+        await query.edit_message_text("💪 Menú de entrenamiento cerrado. ¡Gran trabajo!")
         return ConversationHandler.END
 
     fila_idx = int(query.data)
@@ -400,18 +430,21 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nota_plan = fila_datos[8] if len(fila_datos) > 8 else "-"
     
     context.user_data['ejercicio_actual'] = ejercicio
-
     fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
+    
+    # Minimalismo UI v2.0
+    ej_acortado = acortar_nombre(ejercicio)
+    total_ejs = context.user_data.get('total_ejercicios', '?')
+    ej_num = context.user_data.get('ejercicios_hechos', 0) + 1
+    
     historial_str = get_ultimo_registro_valido(registros, ejercicio, fecha_actual_str)
-
-    # Inyección Hotfix de Warmup (Con Emoji para evitar error de parseo Markdown)
-    warmup_str = f"\n🔥 WARMUP: {WARMUP_HOTFIX[ejercicio]}" if ejercicio in WARMUP_HOTFIX else ""
+    warmup_str = f"\n🔥 {WARMUP_HOTFIX[ejercicio]}" if ejercicio in WARMUP_HOTFIX else ""
 
     mensaje = (
-        f"📍 *EJERCICIO:* {ejercicio} 🎯 *META:* {meta_reps} | {meta_peso}\n"
-        f"📝 *NOTA:* {nota_plan}{historial_str}{warmup_str}\n"
-        "✍️ Ingresa datos (o /cancelar para volver):\n"
-        "   Calentamiento, Peso, Reps, Obs"
+        f"📍 {ej_num}/{total_ejs} {ej_acortado} 🎯 1x{meta_reps} | {meta_peso}\n"
+        f"📝 {nota_plan}{historial_str}{warmup_str}\n"
+        "✍️ Ingresar o /cancelar:\n"
+        "Calentamiento, Peso, Reps, Obs"
     )
     await query.edit_message_text(mensaje, parse_mode="Markdown")
     
@@ -420,24 +453,37 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @requiere_admin
 async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     texto = update.message.text.strip()
+    chat_id = update.effective_chat.id
+
+    # --- MODO FANTASMA: Destrucción del mensaje del usuario ---
+    try: await update.message.delete()
+    except: pass
 
     if texto.lower() == "/cancelar":
-        await update.message.reply_text("Volviendo al resumen de rutina...")
         return await mostrar_rutina(update, context)
+
+    # --- CRONÓMETRO TÁCTICO ---
+    # Solo se dispara si es el primer ejercicio ingresado en esta sesión.
+    if 'tiempo_inicio' not in context.user_data:
+        context.user_data['tiempo_inicio'] = datetime.now()
 
     partes = texto.split(",", 3) 
     
     if len(partes) != 4:
-        await update.message.reply_text("❌ Formato incorrecto. Necesito 4 datos (Calentamiento, Peso, Reps, Obs).\nIntenta de nuevo:")
+        msg_error = "❌ Formato incorrecto. Necesito 4 datos separados por comas.\nEj: 0, 30, 10, ok"
+        if context.user_data.get('main_msg_id'):
+            try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=msg_error)
+            except: pass
         return INGRESANDO_DATOS 
 
-    # Inversión de lógica Hotfix (Calentamiento va primero)
     calentamiento, peso, reps, observacion = [p.strip() for p in partes]
-    
     fila = context.user_data['fila_actual']
     ejercicio = context.user_data['ejercicio_actual']
 
-    await update.message.reply_text(f"⏳ Guardando *{ejercicio}*...", parse_mode="Markdown")
+    # Feedback intermedio (Sobrescribe en la misma burbuja)
+    if context.user_data.get('main_msg_id'):
+        try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=f"⏳ Guardando *{acortar_nombre(ejercicio)}*...", parse_mode="Markdown")
+        except: pass
 
     try:
         celda_obs = sheet.acell(f'I{fila}').value
@@ -449,11 +495,13 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sheet.update_acell(f'E{fila}', reps)
         sheet.update_acell(f'I{fila}', notas_finales)
 
-        await update.message.reply_text(f"✅ ¡Guardado perfecto!")
-        
+        # Recargamos para buscar el siguiente
         fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
         registros = sheet.get_all_values()
         siguiente_idx = None
+        
+        # Aumentamos el contador interno de hechos
+        context.user_data['ejercicios_hechos'] = context.user_data.get('ejercicios_hechos', 0) + 1
         
         for i, fila_datos in enumerate(registros):
             if len(fila_datos) > 2 and fila_datos[0] == fecha_actual_str:
@@ -463,35 +511,69 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     break 
                     
         if siguiente_idx is not None:
+            # FLUJO: MOSTRAR SIGUIENTE EJERCICIO
             fila_datos = registros[siguiente_idx]
             sig_ejercicio = fila_datos[2]
-            sig_meta_reps = fila_datos[3] if len(fila_datos) > 3 else "-"
-            sig_meta_peso = fila_datos[7] if len(fila_datos) > 7 else "-"
-            sig_nota_plan = fila_datos[8] if len(fila_datos) > 8 else "-"
+            meta_reps = fila_datos[3] if len(fila_datos) > 3 else "-"
+            meta_peso = fila_datos[7] if len(fila_datos) > 7 else "-"
+            nota_plan = fila_datos[8] if len(fila_datos) > 8 else "-"
             
             context.user_data['fila_actual'] = siguiente_idx + 1
             context.user_data['ejercicio_actual'] = sig_ejercicio
             
-            historial_str = get_ultimo_registro_valido(registros, sig_ejercicio, fecha_actual_str)
-
-            # Inyección Hotfix de Warmup (Con Emoji para evitar error de parseo Markdown)
-            warmup_str = f"\n🔥 WARMUP: {WARMUP_HOTFIX[sig_ejercicio]}" if sig_ejercicio in WARMUP_HOTFIX else ""
-
-            await update.message.reply_text(f"⏳ Buscando el siguiente ejercicio de tu planificación del {fecha_actual_str}...")
+            ej_acortado = acortar_nombre(sig_ejercicio)
+            total_ejs = context.user_data.get('total_ejercicios', '?')
+            ej_num = context.user_data.get('ejercicios_hechos', 0) + 1
             
+            historial_str = get_ultimo_registro_valido(registros, sig_ejercicio, fecha_actual_str)
+            warmup_str = f"\n🔥 {WARMUP_HOTFIX[sig_ejercicio]}" if sig_ejercicio in WARMUP_HOTFIX else ""
+
             mensaje = (
-                f"📍 *EJERCICIO:* {sig_ejercicio} 🎯 *META:* {sig_meta_reps} | {sig_meta_peso}\n"
-                f"📝 *NOTA:* {sig_nota_plan}{historial_str}{warmup_str}\n"
-                "✍️ Ingresa datos (o /cancelar para volver):\n"
-                "   Calentamiento, Peso, Reps, Obs"
+                f"📍 {ej_num}/{total_ejs} {ej_acortado} 🎯 1x{meta_reps} | {meta_peso}\n"
+                f"📝 {nota_plan}{historial_str}{warmup_str}\n"
+                "✍️ Ingresar o /cancelar:\n"
+                "Calentamiento, Peso, Reps, Obs"
             )
-            await update.message.reply_text(mensaje, parse_mode="Markdown")
+            
+            if context.user_data.get('main_msg_id'):
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=mensaje, parse_mode="Markdown")
             return INGRESANDO_DATOS
+            
         else:
-            return await mostrar_rutina(update, context)
+            # FLUJO: ENTRENAMIENTO FINALIZADO (SUMARIO FANTASMA)
+            tiempo_inicio = context.user_data.get('tiempo_inicio', datetime.now() - timedelta(minutes=45))
+            minutos = int((datetime.now() - tiempo_inicio).total_seconds() / 60)
+            if minutos < 1: minutos = 1
+
+            sumario = f"⏱️ Tiempo de entrenamiento: {minutos} Minutos.\n"
+            
+            for f in registros:
+                if len(f) > 8 and f[0] == fecha_actual_str:
+                    ya_hecho = f[4].strip() not in ["", "0"]
+                    if ya_hecho:
+                        ej_a = acortar_nombre(f[2])
+                        reps_r = f[4]
+                        
+                        # Forense Extractor de las Notas Recién Guardadas
+                        nota_real = f[8]
+                        m_peso = re.search(r'Peso real:\s*(.*?)(?:kg|\s*\|)', nota_real)
+                        peso_str = m_peso.group(1).strip() if m_peso else "0"
+                        
+                        m_cal = re.search(r'Calentamiento:\s*(.*?)\s*\|', nota_real)
+                        cal_str = m_cal.group(1).strip() if m_cal else ""
+                        str_cal = f" 🔥 {cal_str}" if cal_str and cal_str.lower() not in ["0", "none", "", "no"] else ""
+                        
+                        sumario += f"⏳ {ej_a} 1x{reps_r} {peso_str}kg{str_cal}\n"
+
+            if context.user_data.get('main_msg_id'):
+                await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=sumario, parse_mode="Markdown")
+            
+            context.user_data.clear() # Limpieza total de RAM
+            return ConversationHandler.END
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error al guardar en Sheets: {e}")
+        if context.user_data.get('main_msg_id'):
+            await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=f"❌ Error crítico: {e}")
         return ConversationHandler.END
 
 
@@ -576,7 +658,6 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
     hora_actual = ahora_chile.hour
 
     # Compuerta Táctica: Solo consultamos Google Sheets en las horas exactas de las alarmas
-    # Esto salva tu límite de API de Google (Rate Limit).
     if hora_actual not in [11, 19]:
         return
 
@@ -601,19 +682,21 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
                         if not primer_ejercicio_manana:
                             primer_ejercicio_manana = fila[2]
 
+        comandos_tacticos = "\n\n👉 Comandos rápidos: /rutina | /posponer | /medidas"
+
         # REGLA 1: Mañana a las 11:00 (Día de entrenamiento)
         if hora_actual == 11 and entrena_hoy:
-            msg = "🔥 *ALERTA DE IGNICIÓN.*\n\nTienes entrenamiento a las 13:00. Activa el pre-entreno mental."
+            msg = "🔥 *ALERTA DE IGNICIÓN.*\n\nTienes entrenamiento a las 13:00. Activa el pre-entreno mental." + comandos_tacticos
             await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
 
         # REGLA 2: Mañana a las 11:00 (Día de descanso)
         elif hora_actual == 11 and not entrena_hoy:
-            msg = "🛡️ *ESCUDO DE RECUPERACIÓN.*\n\nHoy es día de descanso. Mantente alejado de las pesas. El crecimiento ocurre fuera del gimnasio, no adentro."
+            msg = "🛡️ *ESCUDO DE RECUPERACIÓN.*\n\nHoy es día de descanso. Mantente alejado de las pesas. El crecimiento ocurre fuera del gimnasio, no adentro." + comandos_tacticos
             await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
 
         # REGLA 3: Noche anterior a las 19:00
         elif hora_actual == 19 and entrena_manana:
-            msg = f"⚡ *ALERTA DE PREPARACIÓN.*\n\nMañana te toca entrenamiento (Iniciando con: {primer_ejercicio_manana}). Prepara tu bolso, la comida y duerme al menos 7 horas."
+            msg = f"⚡ *ALERTA DE PREPARACIÓN.*\n\nMañana te toca entrenamiento (Iniciando con: {primer_ejercicio_manana}). Prepara tu bolso, la comida y duerme al menos 7 horas." + comandos_tacticos
             await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
 
     except Exception as e:
