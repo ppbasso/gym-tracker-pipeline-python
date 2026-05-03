@@ -194,7 +194,8 @@ async def iniciar_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     fecha_fila = datetime.strptime(fila[0], "%d/%m/%Y").date()
                     # Solo nos interesan fechas de hoy en adelante
                     if fecha_fila >= hoy:
-                        ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
+                        # FIX: Ahora el '0' también cuenta como hecho/saltado
+                        ya_hecho = len(fila) > 4 and fila[4].strip() != ""
                         if not ya_hecho:
                             fechas_pendientes.add(fecha_fila)
                 except ValueError:
@@ -295,7 +296,8 @@ async def destino_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Buscamos todas las filas con la fecha de origen que no estén hechas
         for i, fila in enumerate(registros):
             if len(fila) > 2 and fila[0] == fecha_origen:
-                ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
+                # FIX: Permitir '0'
+                ya_hecho = len(fila) > 4 and fila[4].strip() != ""
                 if not ya_hecho:
                     filas_a_modificar.append(i + 1)
 
@@ -362,7 +364,8 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     primer_ejercicio_dia = ejercicio
 
                 ya_hecho = False
-                if len(fila) > 4 and fila[4].strip() not in ["", "0"]:
+                # FIX: Solo requiere que la celda no esté vacía (permite saltar con '0')
+                if len(fila) > 4 and fila[4].strip() != "":
                     ya_hecho = True
                     ejercicios_hechos += 1
                 
@@ -449,7 +452,7 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ej_num = context.user_data.get('ejercicios_hechos', 0) + 1
     
     historial_str = get_ultimo_registro_valido(registros, ejercicio, fecha_actual_str)
-    warmup_str = f"\n🔥 {WARMUP_HOTFIX[ejercicio]}" if ejercicio in WARMUP_HOTFIX else ""
+    warmup_str = f"\n🔥 WARMUP: {WARMUP_HOTFIX[ejercicio]}" if ejercicio in WARMUP_HOTFIX else ""
 
     # PARCHADO: Salto de línea antes de 🎯 y remoción del "1x" extra.
     mensaje = (
@@ -511,6 +514,15 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Recargamos para buscar el siguiente
         fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
         registros = sheet.get_all_values()
+
+        # --- PARCHE DE LATENCIA (EVENTUAL CONSISTENCY) ---
+        # Forzamos la actualización en memoria local inmediata por si Google Sheets tarda en refrescar el READ.
+        if len(registros) >= fila:
+            while len(registros[fila - 1]) <= 8:
+                registros[fila - 1].append("")
+            registros[fila - 1][4] = str(reps)
+            registros[fila - 1][8] = notas_finales
+
         siguiente_idx = None
         
         # Aumentamos el contador interno de hechos
@@ -518,7 +530,8 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         for i, fila_datos in enumerate(registros):
             if len(fila_datos) > 2 and fila_datos[0] == fecha_actual_str:
-                ya_hecho = len(fila_datos) > 4 and fila_datos[4].strip() not in ["", "0"]
+                # FIX: Permitimos el 0 como valor de Skip válido
+                ya_hecho = len(fila_datos) > 4 and fila_datos[4].strip() != ""
                 if not ya_hecho:
                     siguiente_idx = i
                     break 
@@ -565,7 +578,8 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for f in registros:
                 if len(f) > 8 and f[0] == fecha_actual_str:
-                    ya_hecho = f[4].strip() not in ["", "0"]
+                    # FIX: Permitir el 0 en el sumario
+                    ya_hecho = f[4].strip() != ""
                     if ya_hecho:
                         ej_a = acortar_nombre(f[2])
                         reps_r = f[4]
@@ -689,7 +703,8 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
         # Leemos el Excel para ver si hoy o mañana hay filas de entrenamiento sin completar
         for fila in registros:
             if len(fila) > 2:
-                ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
+                # FIX: Consistencia con permitir el '0' como completado
+                ya_hecho = len(fila) > 4 and fila[4].strip() != ""
                 if not ya_hecho:
                     if fila[0] == hoy_str:
                         entrena_hoy = True
