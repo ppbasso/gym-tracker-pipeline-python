@@ -139,17 +139,6 @@ def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
     
     return "" 
 
-def es_ejercicio_hecho(fila):
-    """Función táctica: Diferencia un '0' pendiente por defecto de un '0' saltado por el usuario."""
-    if len(fila) <= 4: return False
-    reps_str = str(fila[4]).strip()
-    tiene_reps = reps_str not in ["", "0"]
-    
-    firma_bot = False
-    if len(fila) > 8:
-        firma_bot = "Peso real:" in str(fila[8])
-        
-    return tiene_reps or firma_bot
 
 # --- TODO: DEUDA TÉCNICA - MIGRAR A BD ---
 # Diccionario táctico (Hotfix) para inyectar rutinas de calentamiento específicas en la UX.
@@ -205,7 +194,8 @@ async def iniciar_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     fecha_fila = datetime.strptime(fila[0], "%d/%m/%Y").date()
                     # Solo nos interesan fechas de hoy en adelante
                     if fecha_fila >= hoy:
-                        ya_hecho = es_ejercicio_hecho(fila)
+                        # RESTAURADO: El '0' vuelve a significar PENDIENTE
+                        ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
                         if not ya_hecho:
                             fechas_pendientes.add(fecha_fila)
                 except ValueError:
@@ -306,7 +296,8 @@ async def destino_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Buscamos todas las filas con la fecha de origen que no estén hechas
         for i, fila in enumerate(registros):
             if len(fila) > 2 and fila[0] == fecha_origen:
-                ya_hecho = es_ejercicio_hecho(fila)
+                # RESTAURADO: El '0' vuelve a significar PENDIENTE
+                ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
                 if not ya_hecho:
                     filas_a_modificar.append(i + 1)
 
@@ -372,7 +363,8 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not primer_ejercicio_dia: 
                     primer_ejercicio_dia = ejercicio
 
-                ya_hecho = es_ejercicio_hecho(fila)
+                # RESTAURADO: El '0' vuelve a significar PENDIENTE
+                ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
                 if ya_hecho:
                     ejercicios_hechos += 1
                 
@@ -500,6 +492,15 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return INGRESANDO_DATOS 
 
     calentamiento, peso, reps, observacion = [p.strip() for p in partes]
+    
+    # --- BLOQUEO DE CERO ORDENADO POR EL COMANDANTE ---
+    if str(reps) == "0":
+        msg_error = "⚠️ *WARNING:* No ingreses '0' en repeticiones, el bot no lo entenderá y colapsará. Si deseas saltar el ejercicio, debes hacerlo manualmente en Google Sheets. Ingresa datos reales:\nCalentamiento, Peso, Reps, Obs"
+        if context.user_data.get('main_msg_id'):
+            try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=msg_error, parse_mode="Markdown")
+            except: pass
+        return INGRESANDO_DATOS
+        
     fila = context.user_data['fila_actual']
     ejercicio = context.user_data['ejercicio_actual']
 
@@ -537,7 +538,8 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         for i, fila_datos in enumerate(registros):
             if len(fila_datos) > 2 and fila_datos[0] == fecha_actual_str:
-                ya_hecho = es_ejercicio_hecho(fila_datos)
+                # RESTAURADO: El '0' vuelve a significar PENDIENTE
+                ya_hecho = len(fila_datos) > 4 and fila_datos[4].strip() not in ["", "0"]
                 if not ya_hecho:
                     siguiente_idx = i
                     break 
@@ -584,7 +586,8 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for f in registros:
                 if len(f) > 8 and f[0] == fecha_actual_str:
-                    ya_hecho = es_ejercicio_hecho(f)
+                    # RESTAURADO: El '0' vuelve a significar PENDIENTE
+                    ya_hecho = f[4].strip() not in ["", "0"]
                     if ya_hecho:
                         ej_a = acortar_nombre(f[2])
                         reps_r = f[4]
@@ -708,7 +711,8 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
         # Leemos el Excel para ver si hoy o mañana hay filas de entrenamiento sin completar
         for fila in registros:
             if len(fila) > 2:
-                ya_hecho = es_ejercicio_hecho(fila)
+                # RESTAURADO: El '0' vuelve a significar PENDIENTE
+                ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
                 if not ya_hecho:
                     if fila[0] == hoy_str:
                         entrena_hoy = True
@@ -717,7 +721,7 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
                         if not primer_ejercicio_manana:
                             primer_ejercicio_manana = fila[2]
 
-        comandos_tacticos = "\n\n👉 Comandos rápidos: /rutina | /posponer | /medidas"
+        comandos_tacticos = "\n\n👉 Comandos: /rutina | /posponer | /medidas"
 
         # REGLA 1: Mañana a las 11:00 (Día de entrenamiento)
         if hora_actual == 11 and entrena_hoy:
