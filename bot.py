@@ -139,6 +139,17 @@ def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
     
     return "" 
 
+def es_ejercicio_hecho(fila):
+    """Función táctica: Diferencia un '0' pendiente por defecto de un '0' saltado por el usuario."""
+    if len(fila) <= 4: return False
+    reps_str = str(fila[4]).strip()
+    tiene_reps = reps_str not in ["", "0"]
+    
+    firma_bot = False
+    if len(fila) > 8:
+        firma_bot = "Peso real:" in str(fila[8])
+        
+    return tiene_reps or firma_bot
 
 # --- TODO: DEUDA TÉCNICA - MIGRAR A BD ---
 # Diccionario táctico (Hotfix) para inyectar rutinas de calentamiento específicas en la UX.
@@ -194,8 +205,7 @@ async def iniciar_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     fecha_fila = datetime.strptime(fila[0], "%d/%m/%Y").date()
                     # Solo nos interesan fechas de hoy en adelante
                     if fecha_fila >= hoy:
-                        # FIX: Ahora el '0' también cuenta como hecho/saltado
-                        ya_hecho = len(fila) > 4 and fila[4].strip() != ""
+                        ya_hecho = es_ejercicio_hecho(fila)
                         if not ya_hecho:
                             fechas_pendientes.add(fecha_fila)
                 except ValueError:
@@ -296,8 +306,7 @@ async def destino_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Buscamos todas las filas con la fecha de origen que no estén hechas
         for i, fila in enumerate(registros):
             if len(fila) > 2 and fila[0] == fecha_origen:
-                # FIX: Permitir '0'
-                ya_hecho = len(fila) > 4 and fila[4].strip() != ""
+                ya_hecho = es_ejercicio_hecho(fila)
                 if not ya_hecho:
                     filas_a_modificar.append(i + 1)
 
@@ -363,10 +372,8 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not primer_ejercicio_dia: 
                     primer_ejercicio_dia = ejercicio
 
-                ya_hecho = False
-                # FIX: Solo requiere que la celda no esté vacía (permite saltar con '0')
-                if len(fila) > 4 and fila[4].strip() != "":
-                    ya_hecho = True
+                ya_hecho = es_ejercicio_hecho(fila)
+                if ya_hecho:
                     ejercicios_hechos += 1
                 
                 icono = "✅" if ya_hecho else "⏳"
@@ -530,8 +537,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         for i, fila_datos in enumerate(registros):
             if len(fila_datos) > 2 and fila_datos[0] == fecha_actual_str:
-                # FIX: Permitimos el 0 como valor de Skip válido
-                ya_hecho = len(fila_datos) > 4 and fila_datos[4].strip() != ""
+                ya_hecho = es_ejercicio_hecho(fila_datos)
                 if not ya_hecho:
                     siguiente_idx = i
                     break 
@@ -578,8 +584,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for f in registros:
                 if len(f) > 8 and f[0] == fecha_actual_str:
-                    # FIX: Permitir el 0 en el sumario
-                    ya_hecho = f[4].strip() != ""
+                    ya_hecho = es_ejercicio_hecho(f)
                     if ya_hecho:
                         ej_a = acortar_nombre(f[2])
                         reps_r = f[4]
@@ -703,8 +708,7 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
         # Leemos el Excel para ver si hoy o mañana hay filas de entrenamiento sin completar
         for fila in registros:
             if len(fila) > 2:
-                # FIX: Consistencia con permitir el '0' como completado
-                ya_hecho = len(fila) > 4 and fila[4].strip() != ""
+                ya_hecho = es_ejercicio_hecho(fila)
                 if not ya_hecho:
                     if fila[0] == hoy_str:
                         entrena_hoy = True
