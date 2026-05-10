@@ -64,14 +64,17 @@ SELECCIONANDO, INGRESANDO_DATOS, INGRESANDO_MEDICIONES, POSPONER_ORIGEN, POSPONE
 # ==========================================
 # FASE 2.5: MOTOR FORENSE Y UX (MINIMALISMO)
 # ==========================================
-def acortar_nombre(nombre):
-    """Función táctica para limpiar texto en pantallas pequeñas."""
-    # 1. Elimina posiciones del banco (ej: "(4)", "(7)") visualmente
-    nombre_limpio = re.sub(r'\s*\(\d+\)', '', nombre).strip()
+def acortar_nombre(nombre, mantener_banco=False):
+    """Función táctica para limpiar texto en pantallas pequeñas. Interruptor de banco incluido."""
+    nombre_limpio = nombre.strip()
+    
+    if not mantener_banco:
+        # 1. Elimina posiciones del banco (ej: "(4)", "(7)") visualmente solo si está apagado el switch
+        nombre_limpio = re.sub(r'\s*\(\d+\)', '', nombre_limpio).strip()
     
     # 2. Reemplazos tácticos de lectura
     if "Press con Mancuernas Plano" in nombre_limpio:
-        return "Press Plano [M] 🦾"
+        return nombre_limpio.replace("Press con Mancuernas Plano", "Press Plano [M] 🦾")
     
     nombre_limpio = nombre_limpio.replace(" con Mancuernas", " [M] 🦾")
     nombre_limpio = nombre_limpio.replace(" con Mancuerna", " [M] 🦾")
@@ -139,6 +142,17 @@ def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
     
     return "" 
 
+def es_ejercicio_hecho(fila):
+    """Función táctica: Diferencia un '0' pendiente por defecto de un '0' saltado por el usuario."""
+    if len(fila) <= 4: return False
+    reps_str = str(fila[4]).strip()
+    tiene_reps = reps_str not in ["", "0"]
+    
+    firma_bot = False
+    if len(fila) > 8:
+        firma_bot = "Peso real:" in str(fila[8])
+        
+    return tiene_reps or firma_bot
 
 # --- TODO: DEUDA TÉCNICA - MIGRAR A BD ---
 # Diccionario táctico (Hotfix) para inyectar rutinas de calentamiento específicas en la UX.
@@ -194,8 +208,7 @@ async def iniciar_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     fecha_fila = datetime.strptime(fila[0], "%d/%m/%Y").date()
                     # Solo nos interesan fechas de hoy en adelante
                     if fecha_fila >= hoy:
-                        # RESTAURADO: El '0' vuelve a significar PENDIENTE
-                        ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
+                        ya_hecho = es_ejercicio_hecho(fila)
                         if not ya_hecho:
                             fechas_pendientes.add(fecha_fila)
                 except ValueError:
@@ -296,8 +309,7 @@ async def destino_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Buscamos todas las filas con la fecha de origen que no estén hechas
         for i, fila in enumerate(registros):
             if len(fila) > 2 and fila[0] == fecha_origen:
-                # RESTAURADO: El '0' vuelve a significar PENDIENTE
-                ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
+                ya_hecho = es_ejercicio_hecho(fila)
                 if not ya_hecho:
                     filas_a_modificar.append(i + 1)
 
@@ -363,13 +375,13 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not primer_ejercicio_dia: 
                     primer_ejercicio_dia = ejercicio
 
-                # RESTAURADO: El '0' vuelve a significar PENDIENTE
-                ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
+                ya_hecho = es_ejercicio_hecho(fila)
                 if ya_hecho:
                     ejercicios_hechos += 1
                 
                 icono = "✅" if ya_hecho else "⏳"
-                lista_visual += f"{icono} {acortar_nombre(ejercicio)}\n"
+                # Usamos False para limpiar la visual del banco en el menú resumen
+                lista_visual += f"{icono} {acortar_nombre(ejercicio, mantener_banco=False)}\n"
 
                 if not ya_hecho and primer_pendiente_idx is None:
                     todos_hechos = False
@@ -445,19 +457,27 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['ejercicio_actual'] = ejercicio
     fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
     
-    # Minimalismo UI v2.0
-    ej_acortado = acortar_nombre(ejercicio)
+    # Minimalismo UI v2.0 - Encendemos el interruptor True para ver el Banco
+    ej_acortado = acortar_nombre(ejercicio, mantener_banco=True)
     total_ejs = context.user_data.get('total_ejercicios', '?')
     ej_num = context.user_data.get('ejercicios_hechos', 0) + 1
     
     historial_str = get_ultimo_registro_valido(registros, ejercicio, fecha_actual_str)
     warmup_str = f"\n🔥 WARMUP: {WARMUP_HOTFIX[ejercicio]}" if ejercicio in WARMUP_HOTFIX else ""
 
-    # PARCHADO: Salto de línea antes de 🎯 y remoción del "1x" extra.
+    # RADAR: Motor de Búsqueda Up Next
+    sig_ejercicio = None
+    for i in range(fila_idx + 1, len(registros)):
+        if len(registros[i]) > 2 and registros[i][0] == fecha_actual_str:
+            if not es_ejercicio_hecho(registros[i]):
+                sig_ejercicio = registros[i][2]
+                break
+    up_next_str = f"\n🔜 {acortar_nombre(sig_ejercicio, mantener_banco=True)}" if sig_ejercicio else ""
+
     mensaje = (
         f"📍 {ej_num}/{total_ejs} {ej_acortado}\n"
         f"🎯 {meta_reps} | {meta_peso}\n"
-        f"📝 {nota_plan}{historial_str}{warmup_str}\n"
+        f"📝 {nota_plan}{historial_str}{warmup_str}{up_next_str}\n"
         "✍️ Ingresar o /cancelar:\n"
         "Calentamiento, Peso, Reps, Obs"
     )
@@ -506,7 +526,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Feedback intermedio (Sobrescribe en la misma burbuja)
     if context.user_data.get('main_msg_id'):
-        try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=f"⏳ Guardando *{acortar_nombre(ejercicio)}*...", parse_mode="Markdown")
+        try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=f"⏳ Guardando *{acortar_nombre(ejercicio, mantener_banco=False)}*...", parse_mode="Markdown")
         except: pass
 
     try:
@@ -538,8 +558,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         for i, fila_datos in enumerate(registros):
             if len(fila_datos) > 2 and fila_datos[0] == fecha_actual_str:
-                # RESTAURADO: El '0' vuelve a significar PENDIENTE
-                ya_hecho = len(fila_datos) > 4 and fila_datos[4].strip() not in ["", "0"]
+                ya_hecho = es_ejercicio_hecho(fila_datos)
                 if not ya_hecho:
                     siguiente_idx = i
                     break 
@@ -555,18 +574,26 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['fila_actual'] = siguiente_idx + 1
             context.user_data['ejercicio_actual'] = sig_ejercicio
             
-            ej_acortado = acortar_nombre(sig_ejercicio)
+            ej_acortado = acortar_nombre(sig_ejercicio, mantener_banco=True)
             total_ejs = context.user_data.get('total_ejercicios', '?')
             ej_num = context.user_data.get('ejercicios_hechos', 0) + 1
             
             historial_str = get_ultimo_registro_valido(registros, sig_ejercicio, fecha_actual_str)
             warmup_str = f"\n🔥 {WARMUP_HOTFIX[sig_ejercicio]}" if sig_ejercicio in WARMUP_HOTFIX else ""
 
-            # PARCHADO: Salto de línea antes de 🎯 y remoción del "1x" extra.
+            # RADAR: Motor de Búsqueda Up Next
+            sig_sig_ejercicio = None
+            for i in range(siguiente_idx + 1, len(registros)):
+                if len(registros[i]) > 2 and registros[i][0] == fecha_actual_str:
+                    if not es_ejercicio_hecho(registros[i]):
+                        sig_sig_ejercicio = registros[i][2]
+                        break
+            up_next_str = f"\n🔜 {acortar_nombre(sig_sig_ejercicio, mantener_banco=True)}" if sig_sig_ejercicio else ""
+
             mensaje = (
                 f"📍 {ej_num}/{total_ejs} {ej_acortado}\n"
                 f"🎯 {meta_reps} | {meta_peso}\n"
-                f"📝 {nota_plan}{historial_str}{warmup_str}\n"
+                f"📝 {nota_plan}{historial_str}{warmup_str}{up_next_str}\n"
                 "✍️ Ingresar o /cancelar:\n"
                 "Calentamiento, Peso, Reps, Obs"
             )
@@ -586,10 +613,10 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             for f in registros:
                 if len(f) > 8 and f[0] == fecha_actual_str:
-                    # RESTAURADO: El '0' vuelve a significar PENDIENTE
-                    ya_hecho = f[4].strip() not in ["", "0"]
+                    ya_hecho = es_ejercicio_hecho(f)
                     if ya_hecho:
-                        ej_a = acortar_nombre(f[2])
+                        # Apagamos el banco para mantener el sumario final ultra limpio
+                        ej_a = acortar_nombre(f[2], mantener_banco=False)
                         reps_r = f[4]
                         
                         # Forense Extractor de las Notas Recién Guardadas
@@ -711,8 +738,7 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
         # Leemos el Excel para ver si hoy o mañana hay filas de entrenamiento sin completar
         for fila in registros:
             if len(fila) > 2:
-                # RESTAURADO: El '0' vuelve a significar PENDIENTE
-                ya_hecho = len(fila) > 4 and fila[4].strip() not in ["", "0"]
+                ya_hecho = es_ejercicio_hecho(fila)
                 if not ya_hecho:
                     if fila[0] == hoy_str:
                         entrena_hoy = True
@@ -721,7 +747,7 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
                         if not primer_ejercicio_manana:
                             primer_ejercicio_manana = fila[2]
 
-        comandos_tacticos = "\n\n👉 Comandos: /rutina | /posponer | /medidas"
+        comandos_tacticos = "\n\n👉 Comandos rápidos: /rutina | /posponer | /medidas"
 
         # REGLA 1: Mañana a las 11:00 (Día de entrenamiento)
         if hora_actual == 11 and entrena_hoy:
