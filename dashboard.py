@@ -34,7 +34,7 @@ if not st.session_state["autenticado"]:
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
     
-    # Extraemos el JSON crudo desde los secretos de Streamlit (INTACTO)
+    # Extraemos el JSON crudo desde los secretos de Streamlit
     creds_dict = json.loads(st.secrets["google_credentials"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     
@@ -212,7 +212,7 @@ def render_chart_dual(df_ej_real):
     chart = alt.layer(line_meta, points_meta, line_real, points_real).resolve_scale(y='shared').properties(height=260).configure_view(strokeWidth=0).interactive(bind_y=False)
     st.altair_chart(chart, width="stretch")
 
-def render_ejercicio_bloque(ej, df_g, is_activo=True):
+def render_ejercicio_bloque(ej, df_g, is_activo=True): # <-- MODIFICADO: Switch de estado activo inyectado
     df_ej = df_g[df_g['Ejercicio'] == ej].copy()
     df_ej_real = df_ej[df_ej['Reps_Efectivas'] > 0].copy()
     
@@ -342,13 +342,13 @@ if modo_vista == "🔬 Por Grupo Muscular (Biomecánica)":
                 prox_f = status_map[ej]['prox_fecha']
                 etiqueta_dia = f"[{prox_f.strftime('%d/%m')}]" if prox_f.year != 2099 else "[Activo]"
                 st.markdown(f"##### {etiqueta_dia} {ej}")
-                render_ejercicio_bloque(ej, df_g, is_activo=True)
+                render_ejercicio_bloque(ej, df_g, is_activo=True) # <-- MODIFICADO: Envía bandera activo
                 
         if inactivos_list:
             with st.expander("⚫ HISTÓRICO / INACTIVOS (Cementerio)"):
                 for ej in inactivos_list:
                     st.markdown(f"##### {ej} (Inactivo)")
-                    render_ejercicio_bloque(ej, df_g, is_activo=False)
+                    render_ejercicio_bloque(ej, df_g, is_activo=False) # <-- MODIFICADO: Envía bandera inactivo
 
     with tab1: render_musculo("Pecho")
     with tab2: render_musculo("Espalda")
@@ -381,7 +381,7 @@ else:
         "Curl Bíceps Alterno con Mancuernas", # <-- Q2 REEMPLAZO
         "Extension de Triceps con Mancuerna sobre cabeza", 
         "Zottman Curls", # <-- Q2 REEMPLAZO
-        "Goblet Squat con Mancuerna"
+        "Goblet Squat con Mancuerna" # <-- Q2 AÑADIDO (Reemplaza Rumano en visual Omega)
     ]
     
     def render_modulo(lista_ejercicios):
@@ -395,7 +395,7 @@ else:
                 estado = "🟢" if is_activo else "⚫ (Inactivo)"
                 
                 st.markdown(f"##### {estado} {etiqueta_dia} {ej}")
-                render_ejercicio_bloque(ej, df_g, is_activo=is_activo)
+                render_ejercicio_bloque(ej, df_g, is_activo=is_activo) # <-- MODIFICADO: Switch de estado real
             else:
                 st.markdown(f"##### ⏳ {ej}")
                 st.info("Sin registros históricos aún en Google Sheets para este ejercicio.")
