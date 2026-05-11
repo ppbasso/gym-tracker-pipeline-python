@@ -8,7 +8,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQu
 import gspread
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
-
+from zoneinfo import ZoneInfo # <--- AÑADIDA: Librería nativa para control de husos horarios (DST)
 # --- LÍNEA AGREGADA 1 (PARA RENDER) ---
 from keep_alive import keep_alive
 
@@ -197,7 +197,8 @@ async def iniciar_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Paso 1: Escanea la DB y muestra los días disponibles para mover."""
     await update.message.reply_text("⏳ Analizando tu calendario de entrenamientos pendientes...")
     
-    hoy = datetime.now().date()
+    # HUSO HORARIO CLOUD-NATIVE: Resiliencia ante DST Chileno
+    hoy = datetime.now(ZoneInfo("America/Santiago")).date()
     fechas_pendientes = set()
     
     try:
@@ -282,7 +283,8 @@ async def destino_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fecha_origen = context.user_data['fecha_origen_posponer']
     destino_tipo = query.data.split("_")[1]
     
-    hoy = datetime.now().date()
+    # HUSO HORARIO CLOUD-NATIVE
+    hoy = datetime.now(ZoneInfo("America/Santiago")).date()
     
     # Cálculos matemáticos precisos del calendario
     if destino_tipo == "manana":
@@ -334,7 +336,8 @@ async def destino_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @requiere_admin
 async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    fecha_actual_dt = datetime.now()
+    # HUSO HORARIO CLOUD-NATIVE
+    fecha_actual_dt = datetime.now(ZoneInfo("America/Santiago"))
     fecha_actual_str = fecha_actual_dt.strftime("%d/%m/%Y")
     context.user_data['fecha_actual'] = fecha_actual_str 
 
@@ -455,7 +458,8 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     nota_plan = fila_datos[8] if len(fila_datos) > 8 else "-"
     
     context.user_data['ejercicio_actual'] = ejercicio
-    fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
+    # HUSO HORARIO CLOUD-NATIVE
+    fecha_actual_str = context.user_data.get('fecha_actual', datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m/%Y"))
     
     # Minimalismo UI v2.0 - Encendemos el interruptor True para ver el Banco
     ej_acortado = acortar_nombre(ejercicio, mantener_banco=True)
@@ -500,7 +504,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- CRONÓMETRO TÁCTICO ---
     # Solo se dispara si es el primer ejercicio ingresado en esta sesión.
     if 'tiempo_inicio' not in context.user_data:
-        context.user_data['tiempo_inicio'] = datetime.now()
+        context.user_data['tiempo_inicio'] = datetime.now(ZoneInfo("America/Santiago"))
 
     partes = texto.split(",", 3) 
     
@@ -540,7 +544,8 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sheet.update_acell(f'I{fila}', notas_finales)
 
         # Recargamos para buscar el siguiente
-        fecha_actual_str = context.user_data.get('fecha_actual', datetime.now().strftime("%d/%m/%Y"))
+        # HUSO HORARIO CLOUD-NATIVE
+        fecha_actual_str = context.user_data.get('fecha_actual', datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m/%Y"))
         registros = sheet.get_all_values()
 
         # --- PARCHE DE LATENCIA (EVENTUAL CONSISTENCY) ---
@@ -604,8 +609,9 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         else:
             # FLUJO: ENTRENAMIENTO FINALIZADO (SUMARIO FANTASMA)
-            tiempo_inicio = context.user_data.get('tiempo_inicio', datetime.now() - timedelta(minutes=45))
-            minutos = int((datetime.now() - tiempo_inicio).total_seconds() / 60)
+            # HUSO HORARIO CLOUD-NATIVE
+            tiempo_inicio = context.user_data.get('tiempo_inicio', datetime.now(ZoneInfo("America/Santiago")) - timedelta(minutes=45))
+            minutos = int((datetime.now(ZoneInfo("America/Santiago")) - tiempo_inicio).total_seconds() / 60)
             if minutos < 1: minutos = 1
 
             # PARCHADO: Nuevo UI del Sumario
@@ -676,7 +682,8 @@ async def guardar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE)
         )
         return INGRESANDO_MEDICIONES
 
-    ahora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    # HUSO HORARIO CLOUD-NATIVE
+    ahora = datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m/%Y %H:%M")
     fila_nueva = [ahora] + partes
 
     await update.message.reply_text("⏳ Sincronizando biometría con precisión...")
@@ -712,14 +719,13 @@ async def cancelar_conversacion(update: Update, context: ContextTypes.DEFAULT_TY
 async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
     """
     Función silenciosa que corre cada hora en el servidor.
-    Se ajusta a la zona horaria de Chile (UTC-4) para no fallar en Render.
+    Se ajusta a la zona horaria de Chile usando zoneinfo nativo para no fallar con el horario de verano.
     """
     if not ADMIN_ID:
         return # Si no hay ID configurado, aborta para no causar errores
 
-    # Transformación Estricta de Zona Horaria (Render está en UTC)
-    # Santiago de Chile en horario estándar es UTC-4.
-    ahora_chile = datetime.utcnow() - timedelta(hours=4)
+    # HUSO HORARIO CLOUD-NATIVE: Inmune a DST
+    ahora_chile = datetime.now(ZoneInfo("America/Santiago"))
     hora_actual = ahora_chile.hour
 
     # Compuerta Táctica: Solo consultamos Google Sheets en las horas exactas de las alarmas
