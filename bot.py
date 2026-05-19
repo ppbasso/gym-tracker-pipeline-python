@@ -60,12 +60,7 @@ sheet_mediciones = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda7
 sheet_nutricion = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").worksheet("Nutricion")
 
 # Inicialización del Cerebro INTA Enjaulado
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-
-modelo_nutricion = genai.GenerativeModel(
-    'gemini-2.5-flash',
-    generation_config=genai.types.GenerationConfig(temperature=0.0)
-)
+cliente_ia = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
 PROMPT_MAESTRO_INTA = """
 Tu única fuente de verdad es la 'Tabla de Composición Química de Alimentos Chilenos del INTA' (Universidad de Chile) y la base de datos de LATINFOODS/FAO, los cuales tienes integrados en tu memoria nativa.
@@ -745,7 +740,11 @@ async def registrar_comida(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply = await update.message.reply_text("⏳ Procesando con el motor INTA...")
     try:
-        response = modelo_nutricion.generate_content(f"{PROMPT_MAESTRO_INTA}\n\nUsuario informa: '{entrada_usuario}'")
+        response = cliente_ia.models.generate_content(
+            model='gemini-2.5-flash',
+            contents=f"{PROMPT_MAESTRO_INTA}\n\nUsuario informa: '{entrada_usuario}'",
+            config=types.GenerateContentConfig(temperature=0.0)
+        )
         texto_limpio = response.text.replace('```json', '').replace('```', '').strip()
         data = json.loads(texto_limpio)
         
