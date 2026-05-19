@@ -62,7 +62,7 @@ sheet_nutricion = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 modelo_nutricion = genai.GenerativeModel(
-    'gemini-1.5-flash',
+    'gemini-pro',
     generation_config=genai.types.GenerationConfig(temperature=0.0)
 )
 
