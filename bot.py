@@ -10,7 +10,8 @@ import gspread
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo # <--- AÑADIDA: Librería nativa para control de husos horarios (DST)
-import google.generativeai as genai # <--- AÑADIDA: Motor de Inteligencia del INTA
+from google import genai # <--- AÑADIDA: Motor de Inteligencia del INTA
+from google.genai import types # <--- AÑADIDA: Motor de Inteligencia del INTA
 # --- LÍNEA AGREGADA 1 (PARA RENDER) ---
 from keep_alive import keep_alive
 
@@ -62,7 +63,7 @@ sheet_nutricion = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
 
 modelo_nutricion = genai.GenerativeModel(
-    'gemini-pro',
+    'gemini-2.5-flash',
     generation_config=genai.types.GenerationConfig(temperature=0.0)
 )
 
