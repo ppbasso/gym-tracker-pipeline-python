@@ -760,13 +760,15 @@ async def registrar_comida(update: Update, context: ContextTypes.DEFAULT_TYPE):
         fila_alimentaria = [
             ahora_chile, 
             data['alimento_detectado'], 
+            entrada_usuario, # <--- AÑADIDO: Tu texto original cae justo en la columna 'Descripción'
             data['calorias'], 
             data['proteinas'], 
             data['grasas'], 
             data['carbohidratos']
         ]
         
-        sheet_nutricion.update(values=[fila_alimentaria], range_name=f'A{siguiente_fila}:F{siguiente_fila}')
+        # AÑADIDO: Ampliamos el rango de inyección hasta la columna G
+        sheet_nutricion.update(values=[fila_alimentaria], range_name=f'A{siguiente_fila}:G{siguiente_fila}')
         
         await reply.edit_text(
             f"✅ **Mapeo INTA Exitoso**\n🔍 Detectado: {data['alimento_detectado']}\n\n"
