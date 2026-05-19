@@ -1,5 +1,6 @@
 import os
 import re # <--- AÑADIDA: Librería para buscar patrones de texto (Regex)
+import json # <--- AÑADIDA: Para decodificar la respuesta JSON del INTA
 from functools import wraps # <--- AÑADIDA: Para crear el guardia de seguridad (Decorador)
 from datetime import datetime, timedelta # <--- AÑADIDA: timedelta para manipulación de fechas
 import time # <--- AÑADIDA: Control de concurrencia para evitar crashes en Render
@@ -9,6 +10,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from dotenv import load_dotenv
 from zoneinfo import ZoneInfo # <--- AÑADIDA: Librería nativa para control de husos horarios (DST)
+import google.generativeai as genai # <--- AÑADIDA: Motor de Inteligencia del INTA
 # --- LÍNEA AGREGADA 1 (PARA RENDER) ---
 from keep_alive import keep_alive
 
@@ -54,6 +56,28 @@ client = gspread.authorize(creds)
 # Conectamos a las dos pestañas de tu Data Warehouse
 sheet = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").worksheet("TESTbot")
 sheet_mediciones = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").worksheet("Mediciones")
+sheet_nutricion = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").worksheet("Nutricion")
+
+# Inicialización del Cerebro INTA Enjaulado
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+modelo_nutricion = genai.GenerativeModel(
+    'gemini-1.5-flash',
+    generation_config=genai.types.GenerationConfig(temperature=0.0)
+)
+
+PROMPT_MAESTRO_INTA = """
+Tu única fuente de verdad es la 'Tabla de Composición Química de Alimentos Chilenos del INTA' (Universidad de Chile) y la base de datos de LATINFOODS/FAO, los cuales tienes integrados en tu memoria nativa.
+El usuario enviará un texto describiendo lo que comió. Calcula calorías y macros siguiendo estas reglas de interpretación chilena:
+1. 'Una marraqueta' o 'marraqueta' a secas equivale estrictamente a 2 dientes sueltos (50g totales).
+2. 'Media marraqueta' equivale a 1 diente (25g). 'Dos marraquetas' equivale a 4 dientes (100g).
+3. 'Un italiano' o 'un as' en contexto de calle se mapea como 'Completo Italiano Estándar' o 'As de Vacuno Italiano'.
+4. 'Plato de casino' o 'un plato' de comida casera toma la porción de referencia estándar del INTA.
+
+Si el texto ingresado no tiene relación con comida, responde exactamente: {"error": "No mapeado"}
+
+Devuelve ÚNICAMENTE un objeto JSON estructurado, sin texto extra, sin formato markdown, con este formato exacto:
+{"calorias": 0, "proteinas": 0, "grasas": 0, "carbohidratos": 0, "alimento_detectado": "Nombre y porcion"}
+"""
 
 # ==========================================
 # FASE 2: ESTADOS DE LA CONVERSACIÓN
@@ -175,13 +199,14 @@ async def mostrar_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 *¡Sistema de Comando Heavy Duty!*\n\n"
         "👉 Toca /rutina para iniciar tu entrenamiento.\n"
         "👉 Toca /medidas para registrar tu biometría corporal.\n"
-        "👉 Toca /posponer para reorganizar tu agenda de entrenamiento."
+        "👉 Toca /posponer para reorganizar tu agenda de entrenamiento.\n"
+        "👉 Usa `/comer [comida]` para registrar tus macros con base INTA en tiempo real."
     )
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 @requiere_admin
 async def educar_usuario(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mensaje = "⚠️ *Comando no reconocido.*\n\n👉 Usa /rutina, /medidas o /posponer."
+    mensaje = "⚠️ *Comando no reconocido.*\n\n👉 Usa /rutina, /medidas, /posponer o el comando /comer."
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -707,6 +732,50 @@ async def guardar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     return ConversationHandler.END
 
+
+# --- MÓDULO DE NUTRICIÓN SOBERANA INTA (/comer) ---
+@requiere_admin
+async def registrar_comida(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    entrada_usuario = update.message.text.replace('/comer', '').strip()
+    if not entrada_usuario:
+        await update.message.reply_text("❌ Envía el comando seguido de lo que comiste.\nEj: `/comer una marraqueta con 2 huevos`")
+        return
+
+    reply = await update.message.reply_text("⏳ Procesando con el motor INTA...")
+    try:
+        response = modelo_nutricion.generate_content(f"{PROMPT_MAESTRO_INTA}\n\nUsuario informa: '{entrada_usuario}'")
+        texto_limpio = response.text.replace('```json', '').replace('```', '').strip()
+        data = json.loads(texto_limpio)
+        
+        if "error" in data:
+            await reply.edit_text("❌ Alimento o porción fuera de la cobertura del INTA.")
+            return
+
+        ahora_chile = datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m/%Y %H:%M")
+        columna_fechas = sheet_nutricion.col_values(1)
+        fechas_reales = [f for f in columna_fechas if f.strip() != ""]
+        siguiente_fila = len(fechas_reales) + 1
+
+        fila_alimentaria = [
+            ahora_chile, 
+            data['alimento_detectado'], 
+            data['calorias'], 
+            data['proteinas'], 
+            data['grasas'], 
+            data['carbohidratos']
+        ]
+        
+        sheet_nutricion.update(values=[fila_alimentaria], range_name=f'A{siguiente_fila}:F{siguiente_fila}')
+        
+        await reply.edit_text(
+            f"✅ **Mapeo INTA Exitoso**\n🔍 Detectado: {data['alimento_detectado']}\n\n"
+            f"🔥 Kcal: {data['calorias']} | 🥩 P: {data['proteinas']}g | 🥑 G: {data['grasas']}g | 🍚 C: {data['carbohidratos']}g",
+            parse_mode="Markdown"
+        )
+    except Exception as e:
+        await reply.edit_text(f"❌ Error en el motor de nutrición: {str(e)}")
+
+
 @requiere_admin
 async def cancelar_conversacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Operación cancelada. Usa /rutina, /medidas o /posponer cuando estés listo.")
@@ -817,14 +886,17 @@ def main():
     )
     app.add_handler(conv_posponer)
 
-    # 4. COMANDOS BÁSICOS 
+    # 4. MANEJO DIRECTO DEL COMANDO NUTRICIONAL
+    app.add_handler(CommandHandler("comer", registrar_comida))
+
+    # 5. COMANDOS BÁSICOS 
     app.add_handler(CommandHandler("start", mostrar_ayuda))
     app.add_handler(CommandHandler("ayuda", mostrar_ayuda))
     
-    # 5. ATRAPALOTODO DE BOTONES ZOMBIS
+    # 6. ATRAPALOTODO DE BOTONES ZOMBIS
     app.add_handler(CallbackQueryHandler(boton_expirado))
 
-    # 6. ATRAPALOTODO GLOBAL
+    # 7. ATRAPALOTODO GLOBAL
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, educar_usuario))
 
     # --- LÍNEA AGREGADA 2 (PARA RENDER) ---
