@@ -59,7 +59,10 @@ sheet_mediciones = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda7
 sheet_nutricion = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").worksheet("Nutricion")
 
 # Inicialización del Cerebro INTA Enjaulado
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+genai.configure(
+    api_key=os.getenv("GOOGLE_API_KEY"),
+    client_options={"api_version": "v1"} # <--- FORZA EL ENDPOINT ESTABLE DE PRODUCCIÓN
+)
 modelo_nutricion = genai.GenerativeModel(
     'gemini-1.5-flash',
     generation_config=genai.types.GenerationConfig(temperature=0.0)
