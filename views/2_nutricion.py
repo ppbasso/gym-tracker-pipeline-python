@@ -131,7 +131,9 @@ if not comidas_encoladas.empty:
 with st.expander("⚙️ Configuración Dinámica de Macros (Presupuesto/Fase)", expanded=False):
     st.markdown("Ajusta tus multiplicadores según tu fase actual o presupuesto. Los Carbohidratos se recalcularán solos.")
     col_s1, col_s2 = st.columns(2)
-    prot_multiplier = col_s1.slider("Proteína (g por kg de Masa Magra)", min_value=1.2, max_value=3.0, value=2.2, step=0.1)
+    # Ajusta el 'value=1.8' al número exacto con el que quieres que inicie por defecto
+    prot_multiplier = col_s1.slider("Proteína (g por kg de Masa Magra)", min_value=1.2, max_value=3.0, value=1.8, step=0.1)    
+    # Ajusta el 'value=0.8' si necesitas cambiar la grasa base
     fat_multiplier = col_s2.slider("Grasa (g por kg de Peso Total)", min_value=0.5, max_value=1.5, value=0.8, step=0.1)
 
 # Cálculo de Metas en base a los sliders
