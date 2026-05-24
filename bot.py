@@ -98,7 +98,7 @@ Devuelve ÚNICAMENTE un objeto JSON estructurado, sin texto extra, sin formato m
 # FASE 2: ESTADOS DE LA CONVERSACIÓN
 # ==========================================
 # Ampliamos los estados para cubrir el módulo de entrenamiento, biometría, reagendamiento y nutrición
-SELECCIONANDO, INGRESANDO_DATOS, INGRESANDO_MEDICIONES, POSPONER_ORIGEN, POSPONER_DESTINO, ESPERANDO_COMIDA, ESPERANDO_PESO = range(7)
+SELECCIONANDO, INGRESANDO_DATOS, INGRESANDO_MEDICIONES, POSPONER_ORIGEN, POSPONER_DESTINO, ESPERANDO_COMIDA, ESPERANDO_PESO, ESPERANDO_PASOS = range(8)
 
 # ==========================================
 # FASE 2.5: MOTOR FORENSE Y UX (MINIMALISMO)
@@ -632,7 +632,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for i in range(siguiente_idx + 1, len(registros)):
                 if len(registros[i]) > 2 and registros[i][0] == fecha_actual_str:
                     if not es_ejercicio_hecho(registros[i]):
-                        sig_sig_ejercicio = registros[i][2]
+                        sig_sig_ejercicio = indoor_registros[i][2]
                         break
             up_next_str = f"\n🔜 {acortar_nombre(sig_sig_ejercicio, mantener_banco=True)}" if sig_sig_ejercicio else ""
 
@@ -952,29 +952,59 @@ async def procesar_comida_logica(update: Update, context: ContextTypes.DEFAULT_T
     return ConversationHandler.END
 
 # ==========================================
-# FASE 3.3: MÓDULO METABOLISMO - UPSERT DE PASOS (/pasos)
+# FASE 3.4: MÓDULO METABOLISMO - UPSERT DE PASOS (/pasos COMO MÁQUINA DE ESTADOS)
 # ==========================================
+
 @requiere_admin
-async def registrar_pasos(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """
-    Motor UPSERT: Si el registro de la fecha existe, lo actualiza. Si no, lo crea.
-    """
+async def iniciar_pasos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Paso 1: Detecta si los pasos se enviaron en línea o requiere asistencia."""
     texto = update.message.text.lower().replace('/pasos', '').strip()
     
     try: await update.message.delete()
     except: pass
+    
+    if texto:
+        # Modo Rápido (Ej: /pasos 5000)
+        return await procesar_pasos_logica(update, context, texto)
+    else:
+        # Modo Asistido: Abre hilo y espera
+        msg = await update.message.reply_text("👟 ¿Cuántos pasos registramos hoy? (Ej: 5000 o 'ayer 5000')", parse_mode="Markdown")
+        context.user_data['msg_pasos_id'] = msg.message_id
+        return ESPERANDO_PASOS
 
-    if not texto:
-        await update.message.reply_text("❌ Faltan datos. Usa:\n`/pasos 5000` (para hoy)\n`/pasos ayer 5000` (para ayer)", parse_mode="Markdown")
-        return
+@requiere_admin
+async def recibir_pasos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Paso 2: Captura la respuesta sin comando del usuario."""
+    texto = update.message.text.strip()
+    return await procesar_pasos_logica(update, context, texto)
 
-    es_ayer = "ayer" in texto
+async def procesar_pasos_logica(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str):
+    """Motor UPSERT: Actualiza la celda si la fecha existe, si no, crea fila nueva."""
+    chat_id = update.effective_chat.id
+    
+    try: await update.message.delete()
+    except: pass
+
+    # Función interna para reciclar la burbuja de chat en base al ID guardado
+    async def edit_reply(new_text):
+        if 'msg_pasos_id' in context.user_data:
+            try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['msg_pasos_id'], text=new_text, parse_mode="Markdown")
+            except: await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="Markdown")
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="Markdown")
+
+    if texto.lower() == "/cancelar":
+        await edit_reply("✅ Registro de pasos cancelado.")
+        context.user_data.pop('msg_pasos_id', None)
+        return ConversationHandler.END
+
+    es_ayer = "ayer" in texto.lower()
     
     # Extraer el número de pasos con Regex
     m = re.search(r'\d+', texto)
     if not m:
-        await update.message.reply_text("❌ No detecté ningún número. Ej: /pasos 5000")
-        return
+        await edit_reply("❌ No detecté ningún número. Ej: 5000 o 'ayer 5000'")
+        return ESPERANDO_PASOS
     
     pasos_valor = int(m.group())
     
@@ -992,7 +1022,7 @@ async def registrar_pasos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fecha_target_corta = target_dt.strftime("%d/%m/%Y")
     timestamp_exacto = ahora_dt.strftime("%d/%m/%Y %H:%M:%S") 
     
-    msg = await update.message.reply_text(f"⏳ Sincronizando {pasos_valor} pasos para {etiqueta_dia}...")
+    await edit_reply(f"⏳ Sincronizando {pasos_valor} pasos para {etiqueta_dia}...")
     
     try:
         # LÓGICA UPSERT (Update or Insert)
@@ -1009,17 +1039,21 @@ async def registrar_pasos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             # UPDATE: Sobrescribe la celda exacta en la fila encontrada
             sheet_metabolismo.update_acell(f'A{fila_a_actualizar}', timestamp_exacto)
             sheet_metabolismo.update_acell(f'B{fila_a_actualizar}', pasos_valor)
-            await msg.edit_text(f"🔄 **Update Exitoso:** Se sobrescribieron los pasos de {etiqueta_dia} ({fecha_target_corta}) a {pasos_valor}.", parse_mode="Markdown")
+            await edit_reply(f"🔄 **Update Exitoso:** Se sobrescribieron los pasos de {etiqueta_dia} ({fecha_target_corta}) a {pasos_valor}.")
         else:
             # INSERT: Agrega una fila nueva al final
             fechas_reales = [f[0] for f in registros if f and str(f[0]).strip() != ""]
             siguiente_fila = len(fechas_reales) + 1
             fila_nueva = [timestamp_exacto, pasos_valor]
             sheet_metabolismo.update(values=[fila_nueva], range_name=f'A{siguiente_fila}:B{siguiente_fila}')
-            await msg.edit_text(f"✅ **Insert Exitoso:** Se creó un nuevo registro para {etiqueta_dia} ({fecha_target_corta}) con {pasos_valor} pasos.", parse_mode="Markdown")
+            await edit_reply(f"✅ **Insert Exitoso:** Se creó un nuevo registro para {etiqueta_dia} ({fecha_target_corta}) con {pasos_valor} pasos.")
             
     except Exception as e:
-        await msg.edit_text(f"❌ Error al conectar con Google Sheets: {e}")
+        await edit_reply(f"❌ Error al conectar con Google Sheets: {e}")
+
+    # Limpieza final de memoria
+    context.user_data.pop('msg_pasos_id', None)
+    return ConversationHandler.END
 
 
 @requiere_admin
@@ -1233,7 +1267,7 @@ def main():
     )
     app.add_handler(conv_comer)
 
-    # 5. LA MÁQUINA DE ESTADOS (Módulo Peso) - SE AÑADE A LA APLICACIÓN
+    # 5. LA MÁQUINA DE ESTADOS (Módulo Peso)
     conv_peso = ConversationHandler(
         entry_points=[CommandHandler('peso', iniciar_peso)],
         states={
@@ -1243,16 +1277,25 @@ def main():
     )
     app.add_handler(conv_peso)
 
-    # 6. COMANDOS DEV Y BÁSICOS 
-    app.add_handler(CommandHandler("pasos", registrar_pasos))
+    # 6. LA MÁQUINA DE ESTADOS (Módulo Pasos - UPSERT METABOLISMO)
+    conv_pasos = ConversationHandler(
+        entry_points=[CommandHandler('pasos', iniciar_pasos)],
+        states={
+            ESPERANDO_PASOS: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_pasos)]
+        },
+        fallbacks=[CommandHandler('cancelar', cancelar_conversacion)]
+    )
+    app.add_handler(conv_pasos)
+
+    # 7. COMANDOS DEV Y BÁSICOS 
     app.add_handler(CommandHandler("cola", revisar_cola))
     app.add_handler(CommandHandler("start", mostrar_ayuda))
     app.add_handler(CommandHandler("ayuda", mostrar_ayuda))
     
-    # 7. ATRAPALOTODO DE BOTONES ZOMBIS
+    # 8. ATRAPALOTODO DE BOTONES ZOMBIS
     app.add_handler(CallbackQueryHandler(boton_expirado))
 
-    # 8. ATRAPALOTODO GLOBAL
+    # 9. ATRAPALOTODO GLOBAL
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, educar_usuario))
 
     # --- LÍNEA AGREGADA 2 (PARA RENDER) ---
