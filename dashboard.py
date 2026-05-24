@@ -19,7 +19,7 @@ if not st.session_state["autenticado"]:
     
     with st.form("login_form"):
         # Campo explícito para que el iPhone ancle la contraseña a tu correo
-        usuario = st.text_input("Usuario (Correo):", placeholder="g.basso.castillo@gmail.com")
+        usuario = st.text_input("Usuario (Correo):", value="g.basso.castillo@gmail.com")
         pwd = st.text_input("Contraseña Táctica:", type="password")
         ingresar = st.form_submit_button("Desbloquear Sistema")
         
@@ -40,4 +40,4 @@ if not st.session_state["autenticado"]:
 # Una vez logueado, esta es la pantalla de bienvenida estática.
 st.title("Bienvenido, Comandante. 🫡")
 st.markdown("### Sistema Desbloqueado y Operativo.")
-st.info("👈 Expande el menú lateral izquierdo y selecciona **1_Hipertrofia** para ver tu panel de fuerza.")
+st.info("👈 Expande el menú lateral izquierdo y selecciona **1_hipertrofia** para ver tu panel de fuerza.")
