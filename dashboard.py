@@ -26,7 +26,6 @@ if not st.session_state["autenticado"]:
         if ingresar:
             if usuario.strip().lower() == "g.basso.castillo@gmail.com" and pwd == st.secrets["PASSWORD_MAESTRA"]:
                 st.session_state["autenticado"] = True
-                st.success("✅ Acceso Concedido.")
                 st.rerun()
             else:
                 st.error("❌ Credenciales incorrectas. El SNC te vigila.")
@@ -35,9 +34,13 @@ if not st.session_state["autenticado"]:
     st.stop()
 
 # ==========================================
-# PORTADA DEL SISTEMA (Post-Login)
+# ROUTER MAESTRO (Simetría Perfecta)
 # ==========================================
-# Una vez logueado, esta es la pantalla de bienvenida estática.
-st.title("Bienvenido, Comandante. 🫡")
-st.markdown("### Sistema Desbloqueado y Operativo.")
-st.info("👈 Expande el menú lateral izquierdo y selecciona **1_hipertrofia** para ver tu panel de fuerza.")
+# Al definir las páginas aquí, Streamlit arma el menú lateral automáticamente 
+# capitalizado y simétrico sin necesidad de trucos CSS.
+page_hip = st.Page("views/1_hipertrofia.py", title="Hipertrofia", icon="💪")
+page_nut = st.Page("views/2_nutricion.py", title="Nutrición", icon="🥩")
+page_met = st.Page("views/3_metabolismo.py", title="Metabolismo", icon="🔋")
+
+pg = st.navigation([page_hip, page_nut, page_met])
+pg.run()
