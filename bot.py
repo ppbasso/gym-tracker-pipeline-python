@@ -46,6 +46,21 @@ def requiere_admin(func):
         return await func(update, context, *args, **kwargs) # Todo ok, pasa a la función real
     return wrapper
 
+# ==========================================
+# FASE 0.5: CENTRALIZACIÓN DE MENSAJES (DRY)
+# ==========================================
+# Centralizamos los menús aquí. Si cambias esto, impacta en todo el bot automáticamente.
+MENU_COMANDOS_CORTO = "\n\n👉 Comandos rápidos: /rutina | /posponer | /medidas | /comer | /pasos"
+
+MENU_COMANDOS_LARGO = (
+    "🤖 *¡Sistema de Comando Heavy Duty!*\n\n"
+    "👉 Toca /rutina para iniciar tu entrenamiento.\n"
+    "👉 Toca /posponer para reorganizar tu agenda de entrenamiento.\n"
+    "👉 Toca /medidas para registrar tu biometría corporal.\n"
+    "👉 Toca /comer para registrar tus macros.\n"
+    "👉 Toca /pasos para registrar tu gasto calórico (NEAT)."
+)
+
 
 # ==========================================
 # FASE 1: CONEXIÓN A GOOGLE SHEETS
@@ -54,10 +69,11 @@ scopes = ["https://www.googleapis.com/auth/spreadsheets"]
 creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
 client = gspread.authorize(creds)
 
-# Conectamos a las dos pestañas de tu Data Warehouse
+# Conectamos a las pestañas de tu Data Warehouse
 sheet = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").worksheet("TESTbot")
 sheet_mediciones = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").worksheet("Mediciones")
 sheet_nutricion = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").worksheet("Nutricion")
+sheet_metabolismo = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI").worksheet("Metabolismo")
 
 # Inicialización del Cerebro INTA Enjaulado
 cliente_ia = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
@@ -191,19 +207,13 @@ WARMUP_HOTFIX = {
 
 @requiere_admin
 async def mostrar_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mensaje de bienvenida oficial actualizado."""
-    mensaje = (
-        "🤖 *¡Sistema de Comando Heavy Duty!*\n\n"
-        "👉 Toca /rutina para iniciar tu entrenamiento.\n"
-        "👉 Toca /medidas para registrar tu biometría corporal.\n"
-        "👉 Toca /posponer para reorganizar tu agenda de entrenamiento.\n"
-        "👉 Usa `/comer` para registrar tus macros."
-    )
-    await update.message.reply_text(mensaje, parse_mode="Markdown")
+    """Mensaje de bienvenida oficial actualizado (DRY)."""
+    await update.message.reply_text(MENU_COMANDOS_LARGO, parse_mode="Markdown")
 
 @requiere_admin
 async def educar_usuario(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    mensaje = "⚠️ *Comando no reconocido.*\n\n👉 Usa /rutina, /medidas, /posponer o el comando /comer."
+    """Filtro de error con listado dinámico (DRY)."""
+    mensaje = f"⚠️ *Comando no reconocido.*{MENU_COMANDOS_CORTO}"
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -212,7 +222,7 @@ async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.message.reply_text("⚠️ *Botón Expirado*\nEse menú es antiguo o el bot se reinició.", parse_mode="Markdown")
 
 
-# --- NUEVO FLUJO LOGÍSTICO: /posponer (MÁQUINA DE ESTADOS) ---
+# --- NUEVO FLUJO LOGÍSTICO: /posponer ---
 
 @requiere_admin
 async def iniciar_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -541,7 +551,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # --- BLOQUEO DE CERO ORDENADO POR EL COMANDANTE ---
     if str(reps) == "0":
-        msg_error = "⚠️ *WARNING:* No ingreses '0' en repeticiones, el bot no lo entenderá y colapsará. Si deseas saltar el ejercicio, debes hacerlo manualmente en Google Sheets. Ingresa datos reales:\nCalentamiento, Peso, Reps, Obs"
+        msg_error = "⚠️ *WARNING:* No ingreses '0' en repeticiones. Intenta de nuevo:\nCalentamiento, Peso, Reps, Obs"
         if context.user_data.get('main_msg_id'):
             try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=msg_error, parse_mode="Markdown")
             except: pass
@@ -773,9 +783,7 @@ async def procesar_comida_logica(update: Update, context: ContextTypes.DEFAULT_T
     if 'msg_comer_id' in context.user_data:
         try:
             reply = await context.bot.edit_message_text(
-                chat_id=chat_id, 
-                message_id=context.user_data['msg_comer_id'], 
-                text="⏳ Procesando con el motor INTA..."
+                chat_id=chat_id, message_id=context.user_data['msg_comer_id'], text="⏳ Procesando con el motor INTA..."
             )
         except:
             reply = await context.bot.send_message(chat_id=chat_id, text="⏳ Procesando con el motor INTA...")
@@ -840,10 +848,81 @@ async def procesar_comida_logica(update: Update, context: ContextTypes.DEFAULT_T
     context.user_data.pop('msg_comer_id', None)
     return ConversationHandler.END
 
+# ==========================================
+# FASE 3.3: MÓDULO METABOLISMO - UPSERT DE PASOS (/pasos)
+# ==========================================
+@requiere_admin
+async def registrar_pasos(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Motor UPSERT: Si el registro de la fecha existe, lo actualiza. Si no, lo crea.
+    """
+    texto = update.message.text.lower().replace('/pasos', '').strip()
+    
+    # --- MODO FANTASMA ---
+    try: await update.message.delete()
+    except: pass
+    
+    if not texto:
+        await update.message.reply_text("❌ Faltan datos. Usa:\n`/pasos 5000` (para hoy)\n`/pasos ayer 5000` (para ayer)", parse_mode="Markdown")
+        return
+
+    es_ayer = "ayer" in texto
+    
+    # Extraer el número de pasos con Regex
+    m = re.search(r'\d+', texto)
+    if not m:
+        await update.message.reply_text("❌ No detecté ningún número. Ej: /pasos 5000")
+        return
+    
+    pasos_valor = int(m.group())
+    
+    # Manejo exacto de Zona Horaria Chilena (DST Safe)
+    tz = ZoneInfo("America/Santiago")
+    ahora_dt = datetime.now(tz)
+    
+    if es_ayer:
+        target_dt = ahora_dt - timedelta(days=1)
+        etiqueta_dia = "AYER"
+    else:
+        target_dt = ahora_dt
+        etiqueta_dia = "HOY"
+        
+    fecha_target_corta = target_dt.strftime("%d/%m/%Y")
+    timestamp_exacto = ahora_dt.strftime("%d/%m/%Y %H:%M:%S") 
+    
+    msg = await update.message.reply_text(f"⏳ Sincronizando {pasos_valor} pasos para {etiqueta_dia}...")
+    
+    try:
+        # LÓGICA UPSERT (Update or Insert)
+        registros = sheet_metabolismo.get_all_values()
+        fila_a_actualizar = None
+        
+        # 1. Buscamos si la fecha ya existe (leyendo los primeros 10 chars de Col A)
+        for i, fila in enumerate(registros):
+            if len(fila) > 0 and fila[0][:10] == fecha_target_corta:
+                fila_a_actualizar = i + 1 # +1 porque Google Sheets es Base 1
+                break
+                
+        if fila_a_actualizar:
+            # UPDATE: Sobrescribe la celda exacta en la fila encontrada
+            sheet_metabolismo.update_acell(f'A{fila_a_actualizar}', timestamp_exacto)
+            sheet_metabolismo.update_acell(f'B{fila_a_actualizar}', pasos_valor)
+            await msg.edit_text(f"🔄 **Update Exitoso:** Se sobrescribieron los pasos de {etiqueta_dia} ({fecha_target_corta}) a {pasos_valor}.", parse_mode="Markdown")
+        else:
+            # INSERT: Agrega una fila nueva al final
+            fechas_reales = [f[0] for f in registros if f and str(f[0]).strip() != ""]
+            siguiente_fila = len(fechas_reales) + 1
+            fila_nueva = [timestamp_exacto, pasos_valor]
+            sheet_metabolismo.update(values=[fila_nueva], range_name=f'A{siguiente_fila}:B{siguiente_fila}')
+            await msg.edit_text(f"✅ **Insert Exitoso:** Se creó un nuevo registro para {etiqueta_dia} ({fecha_target_corta}) con {pasos_valor} pasos.", parse_mode="Markdown")
+            
+    except Exception as e:
+        await msg.edit_text(f"❌ Error al conectar con Google Sheets: {e}")
+
 
 @requiere_admin
 async def cancelar_conversacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("Operación cancelada. Usa /rutina, /medidas o /posponer cuando estés listo.")
+    await update.message.reply_text("Operación cancelada." + MENU_COMANDOS_CORTO)
     return ConversationHandler.END
 
 
@@ -978,17 +1057,17 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
 
         # REGLA 1: Mañana a las 11:00 (Día de entrenamiento)
         if hora_actual == 11 and entrena_hoy:
-            msg = "🔥 *ALERTA DE IGNICIÓN.*\n\nTienes entrenamiento a las 13:00. Activa el pre-entreno mental." + comandos_tacticos
+            msg = "🔥 *ALERTA DE IGNICIÓN.*\n\nTienes entrenamiento a las 13:00. Activa el pre-entreno mental." + MENU_COMANDOS_CORTO
             await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
 
         # REGLA 2: Mañana a las 11:00 (Día de descanso)
         elif hora_actual == 11 and not entrena_hoy:
-            msg = "🛡️ *ESCUDO DE RECUPERACIÓN.*\n\nHoy es día de descanso. Mantente alejado de las pesas. El crecimiento ocurre fuera del gimnasio, no adentro." + comandos_tacticos
+            msg = "🛡️ *ESCUDO DE RECUPERACIÓN.*\n\nHoy es día de descanso. Mantente alejado de las pesas. El crecimiento ocurre fuera del gimnasio, no adentro." + MENU_COMANDOS_CORTO
             await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
 
         # REGLA 3: Noche anterior a las 19:00
         elif hora_actual == 19 and entrena_manana:
-            msg = f"⚡ *ALERTA DE PREPARACIÓN.*\n\nMañana te toca entrenamiento (Iniciando con: {primer_ejercicio_manana}). Prepara tu bolso, la comida y duerme al menos 7 horas." + comandos_tacticos
+            msg = f"⚡ *ALERTA DE PREPARACIÓN.*\n\nMañana te toca entrenamiento (Iniciando con: {primer_ejercicio_manana}). Prepara tu bolso, la comida y duerme al menos 7 horas." + MENU_COMANDOS_CORTO
             await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
 
     except Exception as e:
@@ -1051,6 +1130,9 @@ def main():
     app.add_handler(conv_comer)
 
     # 5. COMANDOS DEV Y BÁSICOS 
+    # NUEVO COMANDO: Pasos (UPSERT)
+    app.add_handler(CommandHandler("pasos", registrar_pasos))
+    
     app.add_handler(CommandHandler("cola", revisar_cola))
     app.add_handler(CommandHandler("start", mostrar_ayuda))
     app.add_handler(CommandHandler("ayuda", mostrar_ayuda))
