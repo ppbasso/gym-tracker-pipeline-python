@@ -9,16 +9,6 @@ from datetime import datetime
 import pytz
 
 # ==========================================
-# CONFIGURACIÓN DE PÁGINA
-# ==========================================
-st.set_page_config(page_title="Motor Termodinámico", page_icon="🥩", layout="wide")
-
-# --- SEGURIDAD Y LOGIN ---
-if "autenticado" not in st.session_state or not st.session_state["autenticado"]:
-    st.warning("⚠️ Acceso denegado. Por favor, identifícate en la página principal (dashboard).")
-    st.stop()
-
-# ==========================================
 # 1. EXTRACT: Conexión Multi-Tabla (Data Warehouse)
 # ==========================================
 @st.cache_data(ttl=180) # Caché de 3 minutos para no saturar la API

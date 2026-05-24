@@ -8,11 +8,6 @@ import altair as alt
 import json
 
 # ==========================================
-# CONFIGURACIÓN DE PÁGINA
-# ==========================================
-st.set_page_config(page_title="Centro Comando HD", page_icon="💪", layout="wide")
-
-# ==========================================
 # 1. EXTRACT: Conexión a Google Sheets (Vía Secrets)
 # ==========================================
 @st.cache_data(ttl=300)

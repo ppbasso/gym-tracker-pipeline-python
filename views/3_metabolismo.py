@@ -8,16 +8,6 @@ from datetime import datetime
 import pytz
 
 # ==========================================
-# CONFIGURACIÓN DE PÁGINA Y HACK CSS (TOC)
-# ==========================================
-st.set_page_config(page_title="Regulador Metabólico", page_icon="🔋", layout="wide")
-
-# --- SEGURIDAD Y LOGIN ---
-if "autenticado" not in st.session_state or not st.session_state["autenticado"]:
-    st.warning("⚠️ Acceso denegado. Por favor, identifícate en la página principal (dashboard).")
-    st.stop()
-
-# ==========================================
 # 1. EXTRACT: Conexión a Data Warehouse
 # ==========================================
 @st.cache_data(ttl=180)
