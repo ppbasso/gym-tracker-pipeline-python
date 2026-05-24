@@ -221,6 +221,73 @@ with col_trend:
 
 st.markdown("---")
 
+# ==========================================
+# NUEVO BLOQUE: HISTORIAL TERMODINÁMICO
+# ==========================================
+st.subheader("📊 Historial Termodinámico (Últimos 7 días)")
+st.markdown("*Evolución de tu ingesta calórica desglosada por macro-nutrientes. La línea punteada indica tu límite de Mantenimiento.*")
+
+# Agrupamos por día y sumamos
+df_hist = df_nut.groupby('Solo_Fecha').agg({
+    'Proteínas': 'sum', 'Grasas': 'sum', 'Carbohidratos': 'sum', 'Calorías': 'sum', 'Fecha_Real': 'max'
+}).reset_index()
+
+# Filtramos días con datos, tomamos los últimos 7 y ordenamos cronológicamente de izquierda a derecha
+df_hist = df_hist[df_hist['Calorías'] > 0].sort_values('Fecha_Real', ascending=False).head(7).sort_values('Fecha_Real', ascending=True)
+
+if df_hist.empty:
+    st.info("No hay datos históricos suficientes para graficar.")
+else:
+    # Transformación matemática a Kcal para escala real de energía
+    df_hist['Kcal_Proteínas'] = df_hist['Proteínas'] * 4
+    df_hist['Kcal_Grasas'] = df_hist['Grasas'] * 9
+    df_hist['Kcal_Carbohidratos'] = df_hist['Carbohidratos'] * 4
+
+    # Melt (Despivotar) para Altair
+    df_melt = pd.melt(df_hist, id_vars=['Solo_Fecha', 'Calorías', 'Proteínas', 'Grasas', 'Carbohidratos'],
+                      value_vars=['Kcal_Proteínas', 'Kcal_Grasas', 'Kcal_Carbohidratos'],
+                      var_name='Macro', value_name='Kcal_Aportadas')
+
+    # Limpieza visual de la leyenda
+    df_melt['Macro'] = df_melt['Macro'].str.replace('Kcal_', '')
+
+    # Construcción de la capa 1: Barras Apiladas (Ordinales)
+    base_hist = alt.Chart(df_melt).encode(
+        x=alt.X('Solo_Fecha:O', axis=alt.Axis(title='Día-Mes', labelAngle=-45), sort=None) 
+    )
+
+    bars_hist = base_hist.mark_bar(opacity=0.85).encode(
+        y=alt.Y('Kcal_Aportadas:Q', title='Energía (Kcal)'),
+        color=alt.Color('Macro:N', scale=alt.Scale(
+            domain=['Proteínas', 'Grasas', 'Carbohidratos'],
+            range=['#FF4B4B', '#FACA2B', '#00FFFF']
+        )),
+        order=alt.Order('Macro:N', sort='ascending'),
+        tooltip=[
+            alt.Tooltip('Solo_Fecha:N', title='Fecha'),
+            alt.Tooltip('Calorías:Q', title='Kcal Totales del Día'),
+            alt.Tooltip('Macro:N', title='Macro'),
+            alt.Tooltip('Kcal_Aportadas:Q', title='Kcal Aportadas'),
+            alt.Tooltip('Proteínas:Q', title='Total Proteína (g)'),
+            alt.Tooltip('Grasas:Q', title='Total Grasa (g)'),
+            alt.Tooltip('Carbohidratos:Q', title='Total Carbos (g)')
+        ]
+    )
+
+    # Construcción de la capa 2: Línea de Mantenimiento TDEE
+    df_target = pd.DataFrame({'Límite Mantenimiento': [tdee]})
+    line_target = alt.Chart(df_target).mark_rule(color='white', strokeDash=[5, 5], size=2).encode(
+        y='Límite Mantenimiento:Q',
+        tooltip=[alt.Tooltip('Límite Mantenimiento:Q', title='TDEE actual (Mantenimiento)')]
+    )
+
+    # Renderizado final
+    chart_hist = alt.layer(bars_hist, line_target).resolve_scale(y='shared').properties(height=350).interactive(bind_y=False)
+    st.altair_chart(chart_hist, use_container_width=True)
+
+st.markdown("---")
+
+
 # --- AUDITORÍA DE PLATOS ---
 with st.expander("📝 Registro Forense (Últimos Platos)", expanded=False):
     df_auditoria = df_nut.copy()
