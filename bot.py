@@ -50,15 +50,17 @@ def requiere_admin(func):
 # FASE 0.5: CENTRALIZACIÓN DE MENSAJES (DRY)
 # ==========================================
 # Centralizamos los menús aquí. Si cambias esto, impacta en todo el bot automáticamente.
-MENU_COMANDOS_CORTO = "\n\n👉 Comandos rápidos: /rutina | /posponer | /medidas | /comer | /pasos"
+MENU_COMANDOS_CORTO = "\n\n👉 Comandos rápidos: /rutina | /posponer | /medidas | /comer | /pasos | /cola"
 
 MENU_COMANDOS_LARGO = (
     "🤖 *¡Sistema de Comando Heavy Duty!*\n\n"
     "👉 Toca /rutina para iniciar tu entrenamiento.\n"
     "👉 Toca /posponer para reorganizar tu agenda de entrenamiento.\n"
-    "👉 Toca /medidas para registrar tu biometría corporal.\n"
+    "👉 Toca /medidas para registrar tu biometría corporal completa.\n"
+    "👉 Toca /peso para registrar únicamente tu peso corporal.\n"
     "👉 Toca /comer para registrar tus macros.\n"
-    "👉 Toca /pasos para registrar tu gasto calórico (NEAT)."
+    "👉 Toca /pasos para registrar tu gasto calórico (NEAT).\n"
+    "👉 Toca /cola para revisar la cola de nutricion."
 )
 
 
@@ -739,6 +741,51 @@ async def guardar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
     return ConversationHandler.END
 
+# --- INICIO DEL FLUJO RÁPIDO DE PESO (/peso) ---
+
+@requiere_admin
+async def registrar_peso_rapido(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Módulo de fricción cero para registrar únicamente el peso corporal, rellenando con ceros."""
+    texto = update.message.text.lower().replace('/peso', '').strip()
+    
+    try: await update.message.delete()
+    except: pass
+    
+    if not texto:
+        await update.message.reply_text("❌ Faltan datos. Usa:\n`/peso 101.5`", parse_mode="Markdown")
+        return
+
+    m = re.search(r'\d+[.,]?\d*', texto)
+    if not m:
+        await update.message.reply_text("❌ No detecté ningún número válido. Ej: /peso 101.5")
+        return
+        
+    peso_str = m.group().replace(',', '.')
+    try:
+        peso_val = float(peso_str)
+    except ValueError:
+        await update.message.reply_text("❌ Formato de número inválido.")
+        return
+
+    ahora = datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m/%Y %H:%M")
+    
+    # 10 Columnas: Fecha, Peso, y 8 métricas en cero.
+    fila_nueva = [ahora, peso_val, 0, 0, 0, 0, 0, 0, 0, 0]
+
+    msg = await update.message.reply_text(f"⏳ Registrando peso táctico ({peso_val} kg)...")
+
+    try:
+        columna_fechas = sheet_mediciones.col_values(1)
+        fechas_reales = [f for f in columna_fechas if f.strip() != ""]
+        siguiente_fila = len(fechas_reales) + 1
+        
+        rango = f'A{siguiente_fila}:J{siguiente_fila}'
+        sheet_mediciones.update(values=[fila_nueva], range_name=rango)
+        
+        await msg.edit_text(f"✅ **Peso Guardado:** {peso_val} kg.\n*(Biometría restante rellenada con 0)*", parse_mode="Markdown")
+    except Exception as e:
+        await msg.edit_text(f"❌ Error al guardar en Sheets: {e}")
+
 
 # ==========================================
 # FASE 3.1: MÓDULO DE NUTRICIÓN SOBERANA INTA (/comer)
@@ -1132,7 +1179,7 @@ def main():
     # 5. COMANDOS DEV Y BÁSICOS 
     # NUEVO COMANDO: Pasos (UPSERT)
     app.add_handler(CommandHandler("pasos", registrar_pasos))
-    
+    app.add_handler(CommandHandler("peso", registrar_peso_rapido))
     app.add_handler(CommandHandler("cola", revisar_cola))
     app.add_handler(CommandHandler("start", mostrar_ayuda))
     app.add_handler(CommandHandler("ayuda", mostrar_ayuda))
