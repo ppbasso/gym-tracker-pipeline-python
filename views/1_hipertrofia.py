@@ -6,6 +6,7 @@ import re
 import streamlit as st
 import altair as alt
 import json
+import pytz # <-- AÑADIDA: Para control de zona horaria
 
 # ==========================================
 # 1. EXTRACT: Conexión a Google Sheets (Vía Secrets)
@@ -97,16 +98,19 @@ def process_data(df):
     
     df = df.sort_values(by=['Ejercicio', 'Fecha'])
     
-    hoy_simulado = pd.Timestamp('2026-04-04') 
+    # --- CORRECCIÓN LÍNEA 86: Fecha Dinámica Afeitada (Normalize) ---
+    # pd.Timestamp.now(tz='America/Santiago') nos da la fecha/hora actual en Chile.
+    # .normalize() la recorta a las 00:00:00, y .tz_localize(None) quita el offset para poder compararla con las fechas del Excel (que son naives).
+    hoy_dinamico = pd.Timestamp.now(tz='America/Santiago').normalize().tz_localize(None)
     dict_status = {}
     for ej in df['Ejercicio'].unique():
         df_ej = df[df['Ejercicio'] == ej]
         ultima_vez = df_ej['Fecha'].max()
-        futuras = df_ej[df_ej['Fecha'] >= hoy_simulado]['Fecha']
+        futuras = df_ej[df_ej['Fecha'] >= hoy_dinamico]['Fecha']
         prox_fecha = futuras.min() if not futuras.empty else pd.Timestamp('2099-12-31')
         dict_status[ej] = {
             # --- NUEVA LÓGICA DE VIDA/MUERTE ---
-            # Un ejercicio es activo si y solo si tiene una fecha programada en el futuro.
+            # Un ejercicio es activo si y solo si tiene una fecha programada en el futuro (hoy en adelante).
             'activo': prox_fecha != pd.Timestamp('2099-12-31'),
             'prox_fecha': prox_fecha
         }
