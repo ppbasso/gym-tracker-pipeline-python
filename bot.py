@@ -50,7 +50,7 @@ def requiere_admin(func):
 # FASE 0.5: CENTRALIZACIÓN DE MENSAJES (DRY)
 # ==========================================
 # Centralizamos los menús aquí. Si cambias esto, impacta en todo el bot automáticamente.
-MENU_COMANDOS_CORTO = "\n\n👉 Comandos rápidos: /rutina | /posponer | /medidas | /comer | /pasos | /cola"
+MENU_COMANDOS_CORTO = "\n\n👉 Comandos rápidos: /rutina | /posponer | /medidas | /peso | /comer | /pasos | /cola"
 
 MENU_COMANDOS_LARGO = (
     "🤖 *¡Sistema de Comando Heavy Duty!*\n\n"
@@ -98,7 +98,7 @@ Devuelve ÚNICAMENTE un objeto JSON estructurado, sin texto extra, sin formato m
 # FASE 2: ESTADOS DE LA CONVERSACIÓN
 # ==========================================
 # Ampliamos los estados para cubrir el módulo de entrenamiento, biometría, reagendamiento y nutrición
-SELECCIONANDO, INGRESANDO_DATOS, INGRESANDO_MEDICIONES, POSPONER_ORIGEN, POSPONER_DESTINO, ESPERANDO_COMIDA = range(6)
+SELECCIONANDO, INGRESANDO_DATOS, INGRESANDO_MEDICIONES, POSPONER_ORIGEN, POSPONER_DESTINO, ESPERANDO_COMIDA, ESPERANDO_PESO = range(7)
 
 # ==========================================
 # FASE 2.5: MOTOR FORENSE Y UX (MINIMALISMO)
@@ -215,7 +215,9 @@ async def mostrar_ayuda(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @requiere_admin
 async def educar_usuario(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Filtro de error con listado dinámico (DRY)."""
-    mensaje = f"⚠️ *Comando no reconocido.*{MENU_COMANDOS_CORTO}"
+    try: await update.message.delete()
+    except: pass
+    mensaje = f"⚠️ *Comando no reconocido.*\n\n{MENU_COMANDOS_LARGO}"
     await update.message.reply_text(mensaje, parse_mode="Markdown")
 
 async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -229,7 +231,10 @@ async def boton_expirado(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @requiere_admin
 async def iniciar_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Paso 1: Escanea la DB y muestra los días disponibles para mover."""
-    await update.message.reply_text("⏳ Analizando tu calendario de entrenamientos pendientes...")
+    try: await update.message.delete()
+    except: pass
+    
+    msg = await update.message.reply_text("⏳ Analizando tu calendario de entrenamientos pendientes...")
     
     # HUSO HORARIO CLOUD-NATIVE: Resiliencia ante DST Chileno
     hoy = datetime.now(ZoneInfo("America/Santiago")).date()
@@ -250,7 +255,7 @@ async def iniciar_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     continue
         
         if not fechas_pendientes:
-            await update.message.reply_text("🤷‍♂️ No tienes entrenamientos futuros pendientes en tu agenda.")
+            await msg.edit_text("🤷‍♂️ No tienes entrenamientos futuros pendientes en tu agenda.")
             return ConversationHandler.END
             
         # Ordenar cronológicamente y tomar las próximas 4 sesiones
@@ -263,7 +268,7 @@ async def iniciar_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         botones.append([InlineKeyboardButton("❌ Cancelar", callback_data="cancelar_posponer")])
         
-        await update.message.reply_text(
+        await msg.edit_text(
             "📋 *¿Qué entrenamiento deseas posponer?*",
             reply_markup=InlineKeyboardMarkup(botones),
             parse_mode="Markdown"
@@ -271,7 +276,7 @@ async def iniciar_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return POSPONER_ORIGEN
 
     except Exception as e:
-        await update.message.reply_text(f"❌ Error al leer Google Sheets: {e}")
+        await msg.edit_text(f"❌ Error al leer Google Sheets: {e}")
         return ConversationHandler.END
 
 @requiere_admin
@@ -378,6 +383,8 @@ async def mostrar_rutina(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # --- MODO FANTASMA: Tracking del Mensaje Maestro ---
     if not query and update.message and update.message.text == "/rutina":
         # Disparo limpio desde cero. Limpiamos variables de sesiones viejas.
+        try: await update.message.delete()
+        except: pass
         context.user_data.pop('tiempo_inicio', None)
         reply = await update.message.reply_text(f"⏳ Buscando tu planificación del {fecha_actual_str}...")
         context.user_data['main_msg_id'] = reply.message_id
@@ -687,6 +694,8 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @requiere_admin
 async def iniciar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Activa el módulo de recolección de métricas corporales."""
+    try: await update.message.delete()
+    except: pass
     mensaje = (
         "📏 *MÓDULO DE BIOMETRÍA*\n\n"
         "Ingresa tus 9 métricas separadas por comas en este orden exacto:\n"
@@ -695,22 +704,34 @@ async def iniciar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "`98.5, 42, 115, 108, 107, 33, 33, 60.5, 62`\n\n"
         "✍️ Ingresa los datos ahora (o /cancelar para abortar):"
     )
-    await update.message.reply_text(mensaje, parse_mode="Markdown")
+    msg = await update.message.reply_text(mensaje, parse_mode="Markdown")
+    context.user_data['msg_medidas_id'] = msg.message_id
     return INGRESANDO_MEDICIONES
 
 @requiere_admin
 async def guardar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Recibe la data, valida la longitud y la inyecta con precisión quirúrgica."""
     texto = update.message.text.strip()
-    
+    chat_id = update.effective_chat.id
+    try: await update.message.delete()
+    except: pass
+
+    async def edit_reply(new_text):
+        if 'msg_medidas_id' in context.user_data:
+            try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['msg_medidas_id'], text=new_text, parse_mode="Markdown")
+            except: await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="Markdown")
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="Markdown")
+            
     if texto.lower() == "/cancelar":
-        await update.message.reply_text("📏 Operación de biometría cancelada.")
+        await edit_reply("📏 Operación de biometría cancelada.")
+        context.user_data.pop('msg_medidas_id', None)
         return ConversationHandler.END
 
     partes = [p.strip() for p in texto.split(",")]
     
     if len(partes) != 9:
-        await update.message.reply_text(
+        await edit_reply(
             f"❌ *Error de Formato:*\nEsperaba 9 datos, pero detecté {len(partes)}.\n"
             "Asegúrate de separar todo con comas. Intenta de nuevo:"
         )
@@ -720,7 +741,7 @@ async def guardar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE)
     ahora = datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m/%Y %H:%M")
     fila_nueva = [ahora] + partes
 
-    await update.message.reply_text("⏳ Sincronizando biometría con precisión...")
+    await edit_reply("⏳ Sincronizando biometría con precisión...")
 
     try:
         # LÓGICA DE FRANCOTIRADOR: 
@@ -735,44 +756,71 @@ async def guardar_mediciones(update: Update, context: ContextTypes.DEFAULT_TYPE)
         rango = f'A{siguiente_fila}:J{siguiente_fila}'
         sheet_mediciones.update(values=[fila_nueva], range_name=rango)
         
-        await update.message.reply_text("✅ ¡Métricas corporales guardadas exitosamente en la fila correcta!")
+        await edit_reply("✅ ¡Métricas corporales guardadas exitosamente en la fila correcta!")
     except Exception as e:
-        await update.message.reply_text(f"❌ Error al guardar en Sheets: {e}")
+        await edit_reply(f"❌ Error al guardar en Sheets: {e}")
 
+    context.user_data.pop('msg_medidas_id', None)
     return ConversationHandler.END
 
-# --- INICIO DEL FLUJO RÁPIDO DE PESO (/peso) ---
+# --- INICIO DEL FLUJO RÁPIDO DE PESO (/peso COMO MÁQUINA DE ESTADOS) ---
 
 @requiere_admin
-async def registrar_peso_rapido(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def iniciar_peso(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Módulo de fricción cero para registrar únicamente el peso corporal, rellenando con ceros."""
     texto = update.message.text.lower().replace('/peso', '').strip()
     
     try: await update.message.delete()
     except: pass
     
-    if not texto:
-        await update.message.reply_text("❌ Faltan datos. Usa:\n`/peso 101.5`", parse_mode="Markdown")
-        return
+    if texto:
+        return await procesar_peso_logica(update, context, texto)
+    else:
+        msg = await update.message.reply_text("⚖️ ¿Cuál es tu peso táctico de hoy?", parse_mode="Markdown")
+        context.user_data['msg_peso_id'] = msg.message_id
+        return ESPERANDO_PESO
+
+@requiere_admin
+async def recibir_peso(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    texto = update.message.text.strip()
+    return await procesar_peso_logica(update, context, texto)
+
+async def procesar_peso_logica(update: Update, context: ContextTypes.DEFAULT_TYPE, texto: str):
+    chat_id = update.effective_chat.id
+    
+    try: await update.message.delete()
+    except: pass
+
+    async def edit_reply(new_text):
+        if 'msg_peso_id' in context.user_data:
+            try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['msg_peso_id'], text=new_text, parse_mode="Markdown")
+            except: await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="Markdown")
+        else:
+            await context.bot.send_message(chat_id=chat_id, text=new_text, parse_mode="Markdown")
+
+    if texto.lower() == "/cancelar":
+        await edit_reply("✅ Registro de peso cancelado.")
+        context.user_data.pop('msg_peso_id', None)
+        return ConversationHandler.END
 
     m = re.search(r'\d+[.,]?\d*', texto)
     if not m:
-        await update.message.reply_text("❌ No detecté ningún número válido. Ej: /peso 101.5")
-        return
+        await edit_reply("❌ No detecté ningún número válido. Ej: 101.5")
+        return ESPERANDO_PESO
         
     peso_str = m.group().replace(',', '.')
     try:
         peso_val = float(peso_str)
     except ValueError:
-        await update.message.reply_text("❌ Formato de número inválido.")
-        return
+        await edit_reply("❌ Formato de número inválido.")
+        return ESPERANDO_PESO
 
     ahora = datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m/%Y %H:%M")
     
     # 10 Columnas: Fecha, Peso, y 8 métricas en cero.
     fila_nueva = [ahora, peso_val, 0, 0, 0, 0, 0, 0, 0, 0]
 
-    msg = await update.message.reply_text(f"⏳ Registrando peso táctico ({peso_val} kg)...")
+    await edit_reply(f"⏳ Registrando peso táctico ({peso_val} kg)...")
 
     try:
         columna_fechas = sheet_mediciones.col_values(1)
@@ -782,9 +830,12 @@ async def registrar_peso_rapido(update: Update, context: ContextTypes.DEFAULT_TY
         rango = f'A{siguiente_fila}:J{siguiente_fila}'
         sheet_mediciones.update(values=[fila_nueva], range_name=rango)
         
-        await msg.edit_text(f"✅ **Peso Guardado:** {peso_val} kg.\n*(Biometría restante rellenada con 0)*", parse_mode="Markdown")
+        await edit_reply(f"✅ **Peso Guardado:** {peso_val} kg.\n*(Biometría restante rellenada con 0)*")
     except Exception as e:
-        await msg.edit_text(f"❌ Error al guardar en Sheets: {e}")
+        await edit_reply(f"❌ Error al guardar en Sheets: {e}")
+
+    context.user_data.pop('msg_peso_id', None)
+    return ConversationHandler.END
 
 
 # ==========================================
@@ -797,6 +848,9 @@ async def iniciar_comer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Extrae cualquier texto que venga después del comando /comer
     entrada = update.message.text.replace('/comer', '').strip()
     
+    try: await update.message.delete()
+    except: pass
+
     if entrada:
         # Opción A: Modo Rápido ("/comer 3 italianos")
         return await procesar_comida_logica(update, context, entrada)
@@ -813,7 +867,10 @@ async def recibir_comida(update: Update, context: ContextTypes.DEFAULT_TYPE):
     entrada = update.message.text.strip()
     
     if entrada.lower() == '/cancelar':
-        await update.message.reply_text("✅ Registro de comida cancelado.")
+        try: await update.message.delete()
+        except: pass
+        if 'msg_comer_id' in context.user_data:
+            await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=context.user_data['msg_comer_id'], text="✅ Registro de comida cancelado.")
         return ConversationHandler.END
         
     return await procesar_comida_logica(update, context, entrada)
@@ -822,7 +879,6 @@ async def procesar_comida_logica(update: Update, context: ContextTypes.DEFAULT_T
     """El Motor Principal: Dispara a IA, Maneja el 503 y Actualiza Sheets."""
     chat_id = update.effective_chat.id
     
-    # --- MODO FANTASMA: Destrucción de la burbuja del usuario ---
     try: await update.message.delete()
     except: pass
     
@@ -905,10 +961,9 @@ async def registrar_pasos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """
     texto = update.message.text.lower().replace('/pasos', '').strip()
     
-    # --- MODO FANTASMA ---
     try: await update.message.delete()
     except: pass
-    
+
     if not texto:
         await update.message.reply_text("❌ Faltan datos. Usa:\n`/pasos 5000` (para hoy)\n`/pasos ayer 5000` (para ayer)", parse_mode="Markdown")
         return
@@ -969,6 +1024,8 @@ async def registrar_pasos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @requiere_admin
 async def cancelar_conversacion(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try: await update.message.delete()
+    except: pass
     await update.message.reply_text("Operación cancelada." + MENU_COMANDOS_CORTO)
     return ConversationHandler.END
 
@@ -979,7 +1036,9 @@ async def cancelar_conversacion(update: Update, context: ContextTypes.DEFAULT_TY
 @requiere_admin
 async def revisar_cola(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando /cola: El botón de pánico para auditar fallos 503."""
-    await update.message.reply_text("🔍 Escaneando base de datos en busca de comidas encoladas...")
+    try: await update.message.delete()
+    except: pass
+    msg = await update.message.reply_text("🔍 Escaneando base de datos en busca de comidas encoladas...")
     try:
         registros = sheet_nutricion.get_all_values()
         pendientes = []
@@ -995,11 +1054,11 @@ async def revisar_cola(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     
         if pendientes:
             lista = "\n".join([f"• {p}" for p in pendientes])
-            await update.message.reply_text(f"⏳ Tienes {len(pendientes)} comidas esperando a Google:\n\n{lista}")
+            await msg.edit_text(f"⏳ Tienes {len(pendientes)} comidas esperando a Google:\n\n{lista}")
         else:
-            await update.message.reply_text("✅ La cola está limpia. Todo ha sido calculado.")
+            await msg.edit_text("✅ La cola está limpia. Todo ha sido calculado.")
     except Exception as e:
-        await update.message.reply_text(f"❌ Error al auditar la cola: {e}")
+        await msg.edit_text(f"❌ Error al auditar la cola: {e}")
 
 
 # ==========================================
@@ -1100,8 +1159,6 @@ async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
                         if not primer_ejercicio_manana:
                             primer_ejercicio_manana = fila[2]
 
-        comandos_tacticos = "\n\n👉 Comandos rápidos: /rutina | /posponer | /medidas"
-
         # REGLA 1: Mañana a las 11:00 (Día de entrenamiento)
         if hora_actual == 11 and entrena_hoy:
             msg = "🔥 *ALERTA DE IGNICIÓN.*\n\nTienes entrenamiento a las 13:00. Activa el pre-entreno mental." + MENU_COMANDOS_CORTO
@@ -1176,18 +1233,26 @@ def main():
     )
     app.add_handler(conv_comer)
 
-    # 5. COMANDOS DEV Y BÁSICOS 
-    # NUEVO COMANDO: Pasos (UPSERT)
+    # 5. LA MÁQUINA DE ESTADOS (Módulo Peso) - SE AÑADE A LA APLICACIÓN
+    conv_peso = ConversationHandler(
+        entry_points=[CommandHandler('peso', iniciar_peso)],
+        states={
+            ESPERANDO_PESO: [MessageHandler(filters.TEXT & ~filters.COMMAND, recibir_peso)]
+        },
+        fallbacks=[CommandHandler('cancelar', cancelar_conversacion)]
+    )
+    app.add_handler(conv_peso)
+
+    # 6. COMANDOS DEV Y BÁSICOS 
     app.add_handler(CommandHandler("pasos", registrar_pasos))
-    app.add_handler(CommandHandler("peso", registrar_peso_rapido))
     app.add_handler(CommandHandler("cola", revisar_cola))
     app.add_handler(CommandHandler("start", mostrar_ayuda))
     app.add_handler(CommandHandler("ayuda", mostrar_ayuda))
     
-    # 6. ATRAPALOTODO DE BOTONES ZOMBIS
+    # 7. ATRAPALOTODO DE BOTONES ZOMBIS
     app.add_handler(CallbackQueryHandler(boton_expirado))
 
-    # 7. ATRAPALOTODO GLOBAL
+    # 8. ATRAPALOTODO GLOBAL
     app.add_handler(MessageHandler(filters.TEXT | filters.COMMAND, educar_usuario))
 
     # --- LÍNEA AGREGADA 2 (PARA RENDER) ---
