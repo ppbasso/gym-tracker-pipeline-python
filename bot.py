@@ -294,10 +294,10 @@ async def origen_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data['fecha_origen_posponer'] = fecha_origen
     
     botones = [
-        [InlineKeyboardButton("Mañana (+1 día)", callback_data="dest_manana")],
-        [InlineKeyboardButton("Pasado Mañana (+2 días)", callback_data="dest_pasado")],
-        [InlineKeyboardButton("Próximo Lunes", callback_data="dest_lunes")],
-        [InlineKeyboardButton("Próximo Viernes", callback_data="dest_viernes")],
+        [InlineKeyboardButton("➡ Mover +1 Día", callback_data="dest_manana")],
+        [InlineKeyboardButton("➡ Mover +2 Días", callback_data="dest_pasado")],
+        [InlineKeyboardButton("📅 Mover al Próximo Lunes", callback_data="dest_lunes")],
+        [InlineKeyboardButton("📅 Mover al Próximo Viernes", callback_data="dest_viernes")],
         [InlineKeyboardButton("❌ Cancelar", callback_data="cancelar_posponer")]
     ]
     
@@ -322,22 +322,22 @@ async def destino_posponer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     fecha_origen = context.user_data['fecha_origen_posponer']
     destino_tipo = query.data.split("_")[1]
     
-    # HUSO HORARIO CLOUD-NATIVE
-    hoy = datetime.now(ZoneInfo("America/Santiago")).date()
+    # Transformamos el string fecha_origen ("dd/mm/yyyy") a objeto matemático (fecha_base)
+    fecha_base = datetime.strptime(fecha_origen, "%d/%m/%Y").date()
     
-    # Cálculos matemáticos precisos del calendario
+    # Cálculos matemáticos precisos ANCLADOS a la fecha de la rutina, no al día actual
     if destino_tipo == "manana":
-        nueva_fecha = hoy + timedelta(days=1)
+        nueva_fecha = fecha_base + timedelta(days=1)
     elif destino_tipo == "pasado":
-        nueva_fecha = hoy + timedelta(days=2)
+        nueva_fecha = fecha_base + timedelta(days=2)
     elif destino_tipo == "lunes":
-        dias_para_lunes = (0 - hoy.weekday() + 7) % 7
-        if dias_para_lunes == 0: dias_para_lunes = 7 # Si hoy es lunes, salta al próximo
-        nueva_fecha = hoy + timedelta(days=dias_para_lunes)
+        dias_para_lunes = (0 - fecha_base.weekday() + 7) % 7
+        if dias_para_lunes == 0: dias_para_lunes = 7 # Si la base es lunes, salta al próximo
+        nueva_fecha = fecha_base + timedelta(days=dias_para_lunes)
     elif destino_tipo == "viernes":
-        dias_para_viernes = (4 - hoy.weekday() + 7) % 7
-        if dias_para_viernes == 0: dias_para_viernes = 7 # Si hoy es viernes, salta al próximo
-        nueva_fecha = hoy + timedelta(days=dias_para_viernes)
+        dias_para_viernes = (4 - fecha_base.weekday() + 7) % 7
+        if dias_para_viernes == 0: dias_para_viernes = 7 # Si la base es viernes, salta al próximo
+        nueva_fecha = fecha_base + timedelta(days=dias_para_viernes)
 
     nueva_fecha_str = nueva_fecha.strftime("%d/%m/%Y")
 
@@ -632,7 +632,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for i in range(siguiente_idx + 1, len(registros)):
                 if len(registros[i]) > 2 and registros[i][0] == fecha_actual_str:
                     if not es_ejercicio_hecho(registros[i]):
-                        sig_sig_ejercicio = indoor_registros[i][2]
+                        sig_sig_ejercicio = registros[i][2]
                         break
             up_next_str = f"\n🔜 {acortar_nombre(sig_sig_ejercicio, mantener_banco=True)}" if sig_sig_ejercicio else ""
 
