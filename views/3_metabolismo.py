@@ -200,13 +200,18 @@ else:
     
     # Capa 2: La Verdad Matemática (Línea de Media Móvil 7d)
     linea_peso_ma = base_peso.mark_line(color='#FF4B4B', size=4).encode(
+        y=alt.Y('Media_7d_Peso:Q')
+    )
+
+    # --- INYECCIÓN: Capa 3 (Aterrizaje Magnético UX para Tooltips) ---
+    puntos_peso_ma = base_peso.mark_point(color='#FF4B4B', size=60, filled=True).encode(
         y=alt.Y('Media_7d_Peso:Q'),
         tooltip=[
             alt.Tooltip('Solo_Fecha:N', title='Fecha Cálculo'), 
-            alt.Tooltip('Media_7d_Peso:Q', title='Media Móvil 7d (Pérdida Real)', format='.2f')
+            alt.Tooltip('Media_7d_Peso:Q', title='Peso Real (Media 7d)', format='.2f')
         ]
     )
     
-    # Renderizado Multicapa
-    grafico_peso = alt.layer(puntos_peso, linea_peso_ma).resolve_scale(y='shared').properties(height=350).interactive(bind_y=False)
+    # Renderizado Multicapa (Inyectada capa 3: puntos_peso_ma)
+    grafico_peso = alt.layer(puntos_peso, linea_peso_ma, puntos_peso_ma).resolve_scale(y='shared').properties(height=350).interactive(bind_y=False)
     st.altair_chart(grafico_peso, use_container_width=True)
