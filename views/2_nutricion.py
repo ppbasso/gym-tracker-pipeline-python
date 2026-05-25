@@ -33,6 +33,20 @@ df_nut, df_med, df_met, df_train = load_all_data()
 # ==========================================
 # 2. TRANSFORM: ETL Y ALGORITMOS MATEMÁTICOS
 # ==========================================
+
+# --- FUNCION FORENSE DE LIMPIEZA DE DECIMALES ---
+def limpiar_flotante(val):
+    """
+    Higieniza valores de Google Sheets (strings con comas o puntos) 
+    para forzarlos a float puro, previniendo el bug de la tonelada.
+    """
+    if pd.isna(val) or str(val).strip() == "": 
+        return 0.0
+    try: 
+        return float(str(val).replace(',', '.').strip())
+    except: 
+        return 0.0
+
 # --- HUSO HORARIO ---
 tz_chile = pytz.timezone('America/Santiago')
 hoy_dt = datetime.now(tz_chile)
@@ -48,9 +62,9 @@ fecha_formateada = f"{nombre_dia} {hoy_str_corto}"
 df_nut['Fecha_Real'] = pd.to_datetime(df_nut['Fecha'], format='%d/%m/%Y %H:%M', errors='coerce')
 df_nut['Solo_Fecha'] = df_nut['Fecha_Real'].dt.strftime('%d/%m/%Y')
 
-# Convertimos macros a numéricos. Si hay errores (vacíos), forzamos a 0.
+# Convertimos macros a numéricos de forma segura con el parche decimal
 for col in ['Calorías', 'Proteínas', 'Grasas', 'Carbohidratos']:
-    df_nut[col] = pd.to_numeric(df_nut[col], errors='coerce').fillna(0)
+    df_nut[col] = df_nut[col].apply(limpiar_flotante)
 
 # Detección del Sabueso: Hay descripción pero Kcal es 0
 df_nut['Encolado_Sabueso'] = (df_nut['Calorías'] == 0) & (df_nut['Descripción'] != "")
@@ -71,9 +85,10 @@ cintura_cm = 108.0
 
 if not df_med.empty:
     ultima_medicion = df_med.iloc[-1]
-    peso_kg = float(ultima_medicion['Peso (kg)'])
-    cuello_cm = float(ultima_medicion['Cuello (cm)'])
-    cintura_cm = float(ultima_medicion['Cintura (cm)'])
+    # Extracción blindada contra comas
+    peso_kg = limpiar_flotante(ultima_medicion['Peso (kg)'])
+    cuello_cm = limpiar_flotante(ultima_medicion['Cuello (cm)'])
+    cintura_cm = limpiar_flotante(ultima_medicion['Cintura (cm)'])
 
 # 1. Fórmula Marina de EE.UU. para Grasa Corporal
 try:
@@ -96,7 +111,10 @@ bonus_entrenamiento = 400 if entrena_hoy else 0
 # ¿Cuántos pasos lleva hoy?
 df_met['Fecha_Real'] = pd.to_datetime(df_met['Fecha'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
 df_met['Solo_Fecha'] = df_met['Fecha_Real'].dt.strftime('%d/%m/%Y')
+# Parche decimal para evitar problemas si los pasos traen formato raro
+df_met['Pasos_Emma'] = df_met['Pasos_Emma'].apply(limpiar_flotante)
 pasos_hoy = df_met[df_met['Solo_Fecha'] == hoy_str_corto]['Pasos_Emma'].sum()
+
 # Cálculo Conservador Factor Emma: 0.035 kcal por paso para cuerpos adaptados
 bonus_pasos = pasos_hoy * 0.035 
 
@@ -287,7 +305,6 @@ else:
 
 st.markdown("---")
 
-
 # --- AUDITORÍA DE PLATOS ---
 with st.expander("📝 Registro Forense (Últimos Platos)", expanded=False):
     df_auditoria = df_nut.copy()
@@ -295,6 +312,9 @@ with st.expander("📝 Registro Forense (Últimos Platos)", expanded=False):
     df_auditoria = df_auditoria[df_auditoria['Calorías'] > 0]
     df_auditoria = df_auditoria.sort_values(by='Fecha_Real', ascending=False).head(15)
     
-    # Columna 'Descripción' extirpada
-    df_auditoria_clean = df_auditoria[['Fecha', 'Comida', 'Calorías', 'Proteínas', 'Grasas', 'Carbohidratos']]
-    st.dataframe(df_auditoria_clean, hide_index=True, use_container_width=True)
+    if not df_auditoria.empty:
+        # Extraemos la descripción como alimento detectado 
+        df_auditoria_clean = df_auditoria[['Fecha', 'Descripción', 'Calorías', 'Proteínas', 'Grasas', 'Carbohidratos']]
+        st.dataframe(df_auditoria_clean, hide_index=True, use_container_width=True)
+    else:
+        st.info("No hay platos procesados recientes.")
