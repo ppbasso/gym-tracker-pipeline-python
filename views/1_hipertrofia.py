@@ -108,11 +108,31 @@ def process_data(df):
         ultima_vez = df_ej['Fecha'].max()
         futuras = df_ej[df_ej['Fecha'] >= hoy_dinamico]['Fecha']
         prox_fecha = futuras.min() if not futuras.empty else pd.Timestamp('2099-12-31')
+        es_activo = prox_fecha != pd.Timestamp('2099-12-31')
+        
+        # --- INYECCIÓN: ALGORITMO RADAR ANTI-ESTANCAMIENTO (STRIKE 3) ---
+        es_estancado = False
+        if es_activo:
+            # Filtramos solo sesiones efectivas (sin descargas)
+            df_efectivo = df_ej[(df_ej['Reps_Efectivas'] > 0) & (~df_ej['Es_Descarga'])].sort_values('Fecha')
+            if len(df_efectivo) >= 3:
+                # Tomamos las últimas 3 sesiones
+                ultimas_3 = df_efectivo.tail(3)
+                peso_sesion_1 = ultimas_3.iloc[0]['Peso_Real']
+                reps_sesion_1 = ultimas_3.iloc[0]['Reps_Efectivas']
+                peso_sesion_3 = ultimas_3.iloc[2]['Peso_Real']
+                reps_sesion_3 = ultimas_3.iloc[2]['Reps_Efectivas']
+                
+                # Regla de estancamiento SNC: Si el peso no subió Y las reps tampoco en 3 sesiones, está muerto.
+                if (peso_sesion_3 <= peso_sesion_1) and (reps_sesion_3 <= reps_sesion_1):
+                    es_estancado = True
+
         dict_status[ej] = {
             # --- NUEVA LÓGICA DE VIDA/MUERTE ---
             # Un ejercicio es activo si y solo si tiene una fecha programada en el futuro (hoy en adelante).
-            'activo': prox_fecha != pd.Timestamp('2099-12-31'),
-            'prox_fecha': prox_fecha
+            'activo': es_activo,
+            'prox_fecha': prox_fecha,
+            'estancado': es_estancado # <-- Inyectado: Bandera de Radar
         }
         
     return df, dict_status
@@ -196,7 +216,7 @@ def render_chart_dual(df_ej_real):
     chart = alt.layer(line_meta, points_meta, line_real, points_real).resolve_scale(y='shared').properties(height=260).configure_view(strokeWidth=0).interactive(bind_y=False)
     st.altair_chart(chart, width="stretch")
 
-def render_ejercicio_bloque(ej, df_g, is_activo=True): # <-- MODIFICADO: Switch de estado activo inyectado
+def render_ejercicio_bloque(ej, df_g, is_activo=True, is_estancado=False): # <-- MODIFICADO: Switch de estado activo/estancado inyectado
     df_ej = df_g[df_g['Ejercicio'] == ej].copy()
     df_ej_real = df_ej[df_ej['Reps_Efectivas'] > 0].copy()
     
@@ -207,6 +227,10 @@ def render_ejercicio_bloque(ej, df_g, is_activo=True): # <-- MODIFICADO: Switch 
         return
         
     ultimo = df_ej_real.iloc[-1]
+
+    # --- INYECCIÓN VISUAL MICRO: Tarjeta de Estancamiento ---
+    if is_activo and is_estancado:
+        st.error("🚨 **SNC ADAPTADO / ESTANCAMIENTO:** Llevas 3 sesiones sin mejorar peso ni repeticiones. Tu cuerpo ya se adaptó a este vector de fuerza. Solicita a *La Gema* que reemplace este ejercicio.")
     
     m1, m2 = st.columns(2)
     
@@ -286,6 +310,11 @@ if total_auditados > 0:
     
     st.info(f"💡 **Directriz HD:** {consejo_accionable}")
 
+    # --- INYECCIÓN VISUAL MACRO: Notificación Global de Estancamientos ---
+    ejercicios_estancados_global = [ej for ej, info in status_map.items() if info['activo'] and info.get('estancado', False)]
+    if ejercicios_estancados_global:
+        st.error(f"⚠️ **RADAR ACTIVO:** Tienes {len(ejercicios_estancados_global)} ejercicio(s) con estancamiento crónico. Revisa las pestañas abajo para reemplazarlos.")
+
     with st.expander("Ver detalle general"):
         c1, c2 = st.columns(2)
         c1.markdown("**🟢 Cumpliendo Meta:**\n" + ("\n".join([f"- {e}" for e in lista_exitos]) if lista_exitos else "Ninguno."))
@@ -313,7 +342,11 @@ if modo_vista == "🔬 Por Grupo Muscular (Biomecánica)":
         
         for ej in ejercicios:
             if status_map[ej]['activo']:
-                activos_info.append({'nombre': ej, 'prox_fecha': status_map[ej]['prox_fecha']})
+                activos_info.append({
+                    'nombre': ej, 
+                    'prox_fecha': status_map[ej]['prox_fecha'],
+                    'estancado': status_map[ej].get('estancado', False)
+                })
             else:
                 inactivos_list.append(ej)
                 
@@ -324,15 +357,18 @@ if modo_vista == "🔬 Por Grupo Muscular (Biomecánica)":
             st.markdown("#### 🟢 RUTINA ACTIVA")
             for ej in vivos_ordenados:
                 prox_f = status_map[ej]['prox_fecha']
+                is_estancado = status_map[ej].get('estancado', False)
                 etiqueta_dia = f"[{prox_f.strftime('%d/%m')}]" if prox_f.year != 2099 else "[Activo]"
-                st.markdown(f"##### {etiqueta_dia} {ej}")
-                render_ejercicio_bloque(ej, df_g, is_activo=True) # <-- MODIFICADO: Envía bandera activo
+                icono_alerta = "🚨" if is_estancado else ""
+                
+                st.markdown(f"##### {icono_alerta} {etiqueta_dia} {ej}")
+                render_ejercicio_bloque(ej, df_g, is_activo=True, is_estancado=is_estancado)
                 
         if inactivos_list:
             with st.expander("⚫ HISTÓRICO / INACTIVOS (Cementerio)"):
                 for ej in inactivos_list:
                     st.markdown(f"##### {ej} (Inactivo)")
-                    render_ejercicio_bloque(ej, df_g, is_activo=False) # <-- MODIFICADO: Envía bandera inactivo
+                    render_ejercicio_bloque(ej, df_g, is_activo=False, is_estancado=False)
 
     with tab1: render_musculo("Pecho")
     with tab2: render_musculo("Espalda")
@@ -374,12 +410,14 @@ else:
                 # Se filtra directamente en df_full para no perder el tracking por grupo
                 df_g = df_full[df_full['Ejercicio'] == ej]
                 is_activo = status_map[ej]['activo']
+                is_estancado = status_map[ej].get('estancado', False)
                 prox_f = status_map[ej]['prox_fecha']
                 etiqueta_dia = f"[{prox_f.strftime('%d/%m')}]" if prox_f.year != 2099 else "[Activo]"
                 estado = "🟢" if is_activo else "⚫ (Inactivo)"
+                icono_alerta = "🚨" if (is_activo and is_estancado) else ""
                 
-                st.markdown(f"##### {estado} {etiqueta_dia} {ej}")
-                render_ejercicio_bloque(ej, df_g, is_activo=is_activo) # <-- MODIFICADO: Switch de estado real
+                st.markdown(f"##### {estado} {icono_alerta} {etiqueta_dia} {ej}")
+                render_ejercicio_bloque(ej, df_g, is_activo=is_activo, is_estancado=is_estancado)
             else:
                 st.markdown(f"##### ⏳ {ej}")
                 st.info("Sin registros históricos aún en Google Sheets para este ejercicio.")
@@ -402,6 +440,6 @@ else:
         if ejercicios_inactivos:
             for ej in ejercicios_inactivos:
                 st.markdown(f"##### 🪦 {ej} (Inactivo)")
-                render_ejercicio_bloque(ej, df_full[df_full['Ejercicio'] == ej], is_activo=False)
+                render_ejercicio_bloque(ej, df_full[df_full['Ejercicio'] == ej], is_activo=False, is_estancado=False)
         else:
             st.success("No hay ejercicios inactivos en el sistema.")
