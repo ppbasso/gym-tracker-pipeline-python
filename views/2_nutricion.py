@@ -61,12 +61,12 @@ for col in ['Calorías', 'Proteínas', 'Grasas', 'Carbohidratos']:
 
 df_nut['Encolado_Sabueso'] = (df_nut['Calorías'] == 0) & (df_nut['Descripción'] != "")
 
-# Extracción Atómica de Ingesta Diaria
+# Extracción Atómica de Ingesta Diaria (Base Cruda)
 df_hoy = df_nut[df_nut['Solo_Fecha'] == hoy_str_corto]
-kcal_consumidas = df_hoy['Calorías'].sum() if not df_hoy.empty and 'Calorías' in df_hoy.columns else 0.0
-prot_consumidas = df_hoy['Proteínas'].sum() if not df_hoy.empty and 'Proteínas' in df_hoy.columns else 0.0
-gras_consumidas = df_hoy['Grasas'].sum() if not df_hoy.empty and 'Grasas' in df_hoy.columns else 0.0
-carb_consumidas = df_hoy['Carbohidratos'].sum() if not df_hoy.empty and 'Carbohidratos' in df_hoy.columns else 0.0
+kcal_consumidas_base = df_hoy['Calorías'].sum() if not df_hoy.empty and 'Calorías' in df_hoy.columns else 0.0
+prot_consumidas_base = df_hoy['Proteínas'].sum() if not df_hoy.empty and 'Proteínas' in df_hoy.columns else 0.0
+gras_consumidas_base = df_hoy['Grasas'].sum() if not df_hoy.empty and 'Grasas' in df_hoy.columns else 0.0
+carb_consumidas_base = df_hoy['Carbohidratos'].sum() if not df_hoy.empty and 'Carbohidratos' in df_hoy.columns else 0.0
 
 # --- ALGORITMO DE DOS VECTORES INDEPENDIENTES (ANTI-CEROS DE BIOMETRÍA) ---
 estatura_cm = 180.0
@@ -142,11 +142,23 @@ comidas_encoladas = df_hoy[df_hoy['Encolado_Sabueso'] == True]
 if not comidas_encoladas.empty:
     st.warning(f"🐾 **SABUESO RASTREANDO:** Tienes {len(comidas_encoladas)} comida(s) procesándose por IA. Datos parciales.")
 
-with st.expander("⚙️ Configuración Dinámica de Macros", expanded=False):
-    col_s1, col_s2 = st.columns(2)
-    prot_multiplier = col_s1.slider("Proteína (g por kg Magra)", min_value=1.2, max_value=3.0, value=1.8, step=0.1)    
-    fat_multiplier = col_s2.slider("Grasa (g por kg Peso Total)", min_value=0.5, max_value=1.5, value=0.8, step=0.1)
+with st.expander("⚙️ Configuración Dinámica de Macros y Stock Crítico", expanded=False):
+    col_s1, col_s2, col_s3 = st.columns(3)
+    prot_multiplier = col_s1.slider("Proteína (g/kg Magra)", min_value=1.2, max_value=3.0, value=1.8, step=0.1)    
+    fat_multiplier = col_s2.slider("Grasa (g/kg Peso Total)", min_value=0.5, max_value=1.5, value=0.8, step=0.1)
+    # --- NUEVO SLIDER: IMPUESTO METABÓLICO ---
+    stock_critico_pct = col_s3.slider("Stock Crítico (Margen Error %)", min_value=0, max_value=30, value=15, step=1, help="Aplica una penalización a las calorías consumidas para absorber el margen de error de la IA y el pesaje de alimentos.")
 
+# --- ALGORITMO DE STOCK CRÍTICO (PENALIZACIÓN METABÓLICA) ---
+# Multiplicador que infla artificialmente todo lo que te comes. Ej: 15% -> 1.15
+buffer_factor = 1.0 + (stock_critico_pct / 100.0)
+
+kcal_consumidas = kcal_consumidas_base * buffer_factor
+prot_consumidas = prot_consumidas_base * buffer_factor
+gras_consumidas = gras_consumidas_base * buffer_factor
+carb_consumidas = carb_consumidas_base * buffer_factor
+
+# Cálculo Dinámico de Metas
 target_prot = lean_body_mass * prot_multiplier
 target_fat = peso_kg * fat_multiplier
 kcal_from_prot_fat = (target_prot * 4) + (target_fat * 9)
@@ -169,16 +181,16 @@ porcentaje_llenado = min((kcal_consumidas / limite_hipertrofia), 1.0) if limite_
 
 col1, col2 = st.columns([0.3, 0.7])
 with col1:
-    st.metric("Kcal Consumidas", f"{int(kcal_consumidas)}", delta=estado_color, delta_color="off")
+    st.metric("Kcal Efectivas (Penalizadas)", f"{int(kcal_consumidas)}", delta=estado_color, delta_color="off")
 with col2:
     st.progress(porcentaje_llenado)
     st.markdown(f"""
     **TDEE Calculado:** {int(tdee)} Kcal  *(BMR: {int(bmr)} | Pesas: +{bonus_entrenamiento} | Pasos: +{int(bonus_pasos)})*
-    <br>💡 **Insight HD:** {insight}
+    <br>💡 **Insight HD:** {insight} *(Incluye +{stock_critico_pct}% de Margen de Error por Stock Crítico)*
     """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.subheader("⚖️ Distribución de Combustible")
+st.subheader("⚖️ Distribución de Combustible Efectivo")
 
 col_donut, col_trend = st.columns(2)
 
@@ -203,7 +215,7 @@ with col_donut:
         st.altair_chart(donut, use_container_width=True)
 
 with col_trend:
-    st.markdown("##### 📊 Cumplimiento de Metas")
+    st.markdown("##### 📊 Cumplimiento de Metas Penalizadas")
     
     st.write(f"**Proteína** ({prot_consumidas:.1f}g / {int(target_prot)}g target)")
     st.progress(min(prot_consumidas / target_prot, 1.0) if target_prot > 0 else 0)
@@ -226,6 +238,12 @@ df_hist = df_hist[df_hist['Calorías'] > 0].sort_values('Fecha_Real', ascending=
 if df_hist.empty:
     st.info("No hay datos históricos suficientes.")
 else:
+    # --- APLICACIÓN DE STOCK CRÍTICO A LA RETROSPECTIVA HISTÓRICA ---
+    df_hist['Proteínas'] = df_hist['Proteínas'] * buffer_factor
+    df_hist['Grasas'] = df_hist['Grasas'] * buffer_factor
+    df_hist['Carbohidratos'] = df_hist['Carbohidratos'] * buffer_factor
+    df_hist['Calorías'] = df_hist['Calorías'] * buffer_factor
+
     df_hist['Kcal_Proteínas'] = df_hist['Proteínas'] * 4
     df_hist['Kcal_Grasas'] = df_hist['Grasas'] * 9
     df_hist['Kcal_Carbohidratos'] = df_hist['Carbohidratos'] * 4
@@ -239,10 +257,10 @@ else:
     base_hist = alt.Chart(df_melt).encode(x=alt.X('Solo_Fecha:O', axis=alt.Axis(title='Día-Mes', labelAngle=-45), sort=None))
     
     bars_hist = base_hist.mark_bar(opacity=0.85).encode(
-        y=alt.Y('Kcal_Aportadas:Q', title='Energía (Kcal)'),
+        y=alt.Y('Kcal_Aportadas:Q', title='Energía Efectiva (Kcal)'),
         color=alt.Color('Macro:N', scale=alt.Scale(domain=['Proteínas', 'Grasas', 'Carbohidratos'], range=['#FF4B4B', '#FACA2B', '#00FFFF'])),
         order=alt.Order('Macro:N', sort='ascending'),
-        tooltip=[alt.Tooltip('Solo_Fecha:N', title='Fecha'), alt.Tooltip('Macro:N', title='Macro'), alt.Tooltip('Kcal_Aportadas:Q', title='Kcal')]
+        tooltip=[alt.Tooltip('Solo_Fecha:N', title='Fecha'), alt.Tooltip('Macro:N', title='Macro'), alt.Tooltip('Kcal_Aportadas:Q', title='Kcal Efectivas')]
     )
 
     df_target = pd.DataFrame({'Límite Mantenimiento': [tdee]})
@@ -252,9 +270,10 @@ else:
 
     chart_hist = alt.layer(bars_hist, line_target).resolve_scale(y='shared').properties(height=350).interactive(bind_y=False)
     st.altair_chart(chart_hist, use_container_width=True)
+    st.caption("*Nota: El historial refleja las calorías penalizadas por el Stock Crítico activo para mantener coherencia visual.*")
 
 st.markdown("---")
-with st.expander("📝 Registro Forense (Últimos Platos)", expanded=False):
+with st.expander("📝 Registro Forense Crudo (Últimos Platos Sin Penalizar)", expanded=False):
     df_auditoria = df_nut[df_nut['Calorías'] > 0].sort_values(by='Fecha_Real', ascending=False).head(15)
     if not df_auditoria.empty:
         st.dataframe(df_auditoria[['Fecha', 'Descripción', 'Calorías', 'Proteínas', 'Grasas', 'Carbohidratos']], hide_index=True, use_container_width=True)
