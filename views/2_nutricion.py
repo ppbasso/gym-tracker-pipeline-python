@@ -34,6 +34,7 @@ df_nut, df_med, df_met, df_train = load_all_data()
 # ==========================================
 
 def limpiar_flotante(val):
+    """Higieniza strings de gsheets con comas/puntos para forzar float nativo."""
     if pd.isna(val) or str(val).strip() == "": 
         return 0.0
     try: 
@@ -58,45 +59,50 @@ for col in ['Calorías', 'Proteínas', 'Grasas', 'Carbohidratos']:
     if col in df_nut.columns:
         df_nut[col] = df_nut[col].apply(limpiar_flotante)
 
-# --- ESCUDO ANTI-ANOMALÍAS DE GOOGLE SHEETS ---
-# Si la IA manda 1530.9 y Sheets (Chile) lo lee como 15309, corregimos dividiendo la fila entera por 10.
-anomalias = df_nut['Calorías'] > 4000
-if anomalias.any():
-    for col_macro in ['Calorías', 'Proteínas', 'Grasas', 'Carbohidratos']:
-        if col_macro in df_nut.columns:
-            df_nut.loc[anomalias, col_macro] = df_nut.loc[anomalias, col_macro] / 10
-
 df_nut['Encolado_Sabueso'] = (df_nut['Calorías'] == 0) & (df_nut['Descripción'] != "")
 
-# Extracción Atómica y Blindada
+# Extracción Atómica de Ingesta Diaria
 df_hoy = df_nut[df_nut['Solo_Fecha'] == hoy_str_corto]
 kcal_consumidas = df_hoy['Calorías'].sum() if not df_hoy.empty and 'Calorías' in df_hoy.columns else 0.0
 prot_consumidas = df_hoy['Proteínas'].sum() if not df_hoy.empty and 'Proteínas' in df_hoy.columns else 0.0
 gras_consumidas = df_hoy['Grasas'].sum() if not df_hoy.empty and 'Grasas' in df_hoy.columns else 0.0
 carb_consumidas = df_hoy['Carbohidratos'].sum() if not df_hoy.empty and 'Carbohidratos' in df_hoy.columns else 0.0
 
-# --- ALGORITMO KATCH-MCARDLE ---
-df_med['Fecha_Real'] = pd.to_datetime(df_med['Fecha'], dayfirst=True, errors='coerce')
-df_med = df_med.sort_values('Fecha_Real').dropna(subset=['Peso (kg)', 'Cuello (cm)', 'Cintura (cm)'])
-
+# --- ALGORITMO DE DOS VECTORES INDEPENDIENTES (ANTI-CEROS DE BIOMETRÍA) ---
 estatura_cm = 180.0
-peso_kg = 102.0
-cuello_cm = 42.0
-cintura_cm = 108.0
+peso_kg = 102.0    # Fallback humano por defecto
+cuello_cm = 42.0   # Fallback humano por defecto
+cintura_cm = 108.0 # Fallback humano por defecto
 
 if not df_med.empty:
-    ultima_medicion = df_med.iloc[-1]
-    peso_kg = limpiar_flotante(ultima_medicion['Peso (kg)'])
-    cuello_cm = limpiar_flotante(ultima_medicion['Cuello (cm)'])
-    cintura_cm = limpiar_flotante(ultima_medicion['Cintura (cm)'])
+    # Higienizamos toda la matriz de mediciones de forma antibalística
+    df_med['Peso_Clean'] = df_med['Peso (kg)'].apply(limpiar_flotante)
+    df_med['Cuello_Clean'] = df_med['Cuello (cm)'].apply(limpiar_flotante)
+    df_med['Cintura_Clean'] = df_med['Cintura (cm)'].apply(limpiar_flotante)
+    
+    # Vector 1: Extraer el último peso real absoluto (ej: el control diario de hoy)
+    df_pesos_validos = df_med[df_med['Peso_Clean'] > 0]
+    if not df_pesos_validos.empty:
+        peso_kg = df_pesos_validos.iloc[-1]['Peso_Clean']
+        
+    # Vector 2: Buscar hacia atrás la última fila donde existan cintas y cuellos medidos (Quincenal)
+    df_cintas_validas = df_med[(df_med['Cuello_Clean'] > 0) & (df_med['Cintura_Clean'] > 0)]
+    if not df_cintas_validas.empty:
+        cuello_cm = df_cintas_validas.iloc[-1]['Cuello_Clean']
+        cintura_cm = df_cintas_validas.iloc[-1]['Cintura_Clean']
 
+# 1. Fórmula Marina de EE.UU. Blindada (Composición Corporal Conocida)
 try:
     log_cintura_cuello = np.log10(cintura_cm - cuello_cm)
     log_estatura = np.log10(estatura_cm)
     body_fat_pct = (495.0 / (1.0324 - 0.19077 * log_cintura_cuello + 0.15456 * log_estatura)) - 450.0
+    # Candado de cordura por si los datos computan un absurdo
+    if np.isinf(body_fat_pct) or np.isnan(body_fat_pct) or body_fat_pct < 2:
+        body_fat_pct = 25.0
 except:
     body_fat_pct = 25.0 
 
+# 2. Masa Magra Humana y BMR de Katch-McArdle Estable
 lean_body_mass = peso_kg * (1 - (body_fat_pct / 100.0))
 bmr = 370 + (21.6 * lean_body_mass)
 
@@ -154,7 +160,7 @@ if kcal_consumidas < limite_deficit:
     insight = f"Estás en déficit agresivo. Margen de **{int(limite_deficit - kcal_consumidas)} Kcal** antes de límite recomendado."
 elif limite_deficit <= kcal_consumidas <= limite_mantenimiento:
     estado_color = "🟢 ZONA DE MANTENIMIENTO"
-    insight = f"Cuerpo estabilizado. Quedan **{int(limite_mantenimiento - kcal_consumidas)} Kcal** para ganar peso."
+    insight = f"Cuerpo de control estabilizado. Quedan **{int(limite_mantenimiento - kcal_consumidas)} Kcal** para ganar peso."
 else:
     estado_color = "🔴 ZONA DE SUPERÁVIT"
     insight = "Estás construyendo masa o almacenando grasa. Superaste el mantenimiento."
