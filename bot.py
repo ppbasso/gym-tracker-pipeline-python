@@ -2,7 +2,7 @@ import os
 import re # <--- AÑADIDA: Librería para buscar patrones de texto (Regex)
 import json # <--- AÑADIDA: Para decodificar la respuesta JSON del INTA
 from functools import wraps # <--- AÑADIDA: Para crear el guardia de seguridad (Decorador)
-from datetime import datetime, timedelta # <--- AÑADIDA: timedelta para manipulación de fechas
+from datetime import datetime, timedelta, time as dt_time # <--- AÑADIDA: time as dt_time para las alarmas
 import time # <--- AÑADIDA: Control de concurrencia para evitar crashes en Render
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
@@ -1099,6 +1099,32 @@ async def revisar_cola(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # FASE 3.5: MOTOR DE TAREAS EN SEGUNDO PLANO (JOBQUEUE)
 # ==========================================
 
+async def alarma_biometria(context: ContextTypes.DEFAULT_TYPE):
+    """
+    Motor de recolección de datos matutinos con lógica bisemanal.
+    Evalúa si es domingo y la semana es par para pedir medidas completas.
+    """
+    if not ADMIN_ID: return
+    
+    # HUSO HORARIO CLOUD-NATIVE
+    ahora = datetime.now(ZoneInfo("America/Santiago"))
+    es_domingo = ahora.weekday() == 6 # En Python, 0 es Lunes y 6 es Domingo
+    
+    # LÓGICA QUINCENAL: Usamos el número de semana del año. 
+    # Módulo 2 == 0 asegura que salte una semana sí y una no.
+    semana_par = ahora.isocalendar()[1] % 2 == 0
+
+    if es_domingo and semana_par:
+        msg = "📊 *INFORME DOMINICAL DE BIOMETRÍA (QUINCENAL)*\n\nComandante, reporte de estado:\n1. Toca /peso para registrar tu métrica en la balanza.\n2. Toca /medidas para registrar tu biometría completa con la cinta."
+    else:
+        msg = "⚖️ *CONTROL DE PESO DIARIO*\n\nBuenos días. En ayunas y después del baño: toca /peso para registrar el dato de hoy."
+
+    try:
+        await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+    except Exception as e:
+        print(f"Error en alarma de biometría: {e}")
+
+
 async def sabueso_nutricion(context: ContextTypes.DEFAULT_TYPE):
     """
     Se ejecuta cada 10 minutos buscando filas sin macros.
@@ -1222,8 +1248,18 @@ def main():
     # --- INYECCIÓN JOBQUEUE ---
     # 1. Alarma de Entrenamiento: Corre cada 3600 segs (1 hora)
     app.job_queue.run_repeating(motor_notificaciones, interval=3600, first=10)
+    
     # 2. Sabueso de Nutrición: Corre cada 600 segs (10 minutos)
     app.job_queue.run_repeating(sabueso_nutricion, interval=600, first=30)
+
+    # 3. Alarmas de Biometría (Horarios Tácticos Asimétricos)
+    # Miércoles (2) y Jueves (3) a las 06:05 AM
+    hora_madrugada = dt_time(hour=6, minute=5, tzinfo=ZoneInfo("America/Santiago"))
+    app.job_queue.run_daily(alarma_biometria, time=hora_madrugada, days=(2, 3))
+
+    # Viernes (4), Sábado (5), Domingo (6), Lunes (0), Martes (1) a las 07:25 AM
+    hora_manana = dt_time(hour=7, minute=25, tzinfo=ZoneInfo("America/Santiago"))
+    app.job_queue.run_daily(alarma_biometria, time=hora_manana, days=(0, 1, 4, 5, 6))
 
     # 1. LA MÁQUINA DE ESTADOS (Módulo de Entrenamiento)
     conv_rutina = ConversationHandler(
