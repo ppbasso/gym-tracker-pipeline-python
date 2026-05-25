@@ -58,9 +58,17 @@ for col in ['Calorías', 'Proteínas', 'Grasas', 'Carbohidratos']:
     if col in df_nut.columns:
         df_nut[col] = df_nut[col].apply(limpiar_flotante)
 
+# --- ESCUDO ANTI-ANOMALÍAS DE GOOGLE SHEETS ---
+# Si la IA manda 1530.9 y Sheets (Chile) lo lee como 15309, corregimos dividiendo la fila entera por 10.
+anomalias = df_nut['Calorías'] > 4000
+if anomalias.any():
+    for col_macro in ['Calorías', 'Proteínas', 'Grasas', 'Carbohidratos']:
+        if col_macro in df_nut.columns:
+            df_nut.loc[anomalias, col_macro] = df_nut.loc[anomalias, col_macro] / 10
+
 df_nut['Encolado_Sabueso'] = (df_nut['Calorías'] == 0) & (df_nut['Descripción'] != "")
 
-# Extracción Atómica y Blindada (A prueba de KeyError)
+# Extracción Atómica y Blindada
 df_hoy = df_nut[df_nut['Solo_Fecha'] == hoy_str_corto]
 kcal_consumidas = df_hoy['Calorías'].sum() if not df_hoy.empty and 'Calorías' in df_hoy.columns else 0.0
 prot_consumidas = df_hoy['Proteínas'].sum() if not df_hoy.empty and 'Proteínas' in df_hoy.columns else 0.0
@@ -194,7 +202,6 @@ with col_trend:
     st.write(f"**Proteína** ({prot_consumidas:.1f}g / {int(target_prot)}g target)")
     st.progress(min(prot_consumidas / target_prot, 1.0) if target_prot > 0 else 0)
     
-    # --- CORRECCIÓN INTEGRADA: 'target_fat' en vez de 'target_grupo' ---
     st.write(f"**Grasas** ({gras_consumidas:.1f}g / {int(target_fat)}g target)")
     st.progress(min(gras_consumidas / target_fat, 1.0) if target_fat > 0 else 0)
     
