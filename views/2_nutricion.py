@@ -164,18 +164,59 @@ target_fat = peso_kg * fat_multiplier
 kcal_from_prot_fat = (target_prot * 4) + (target_fat * 9)
 target_carbs = max(0, (limite_deficit - kcal_from_prot_fat) / 4) 
 
-st.markdown("---")
-st.subheader("🔥 Balance Energético Dinámico (Hoy)")
+# --- NUEVO MOTOR: AUDITOR DE FUGAS METABÓLICAS ---
+exceso_grasas = gras_consumidas - target_fat
+exceso_carbos = carb_consumidas - target_carbs
+exceso_prot = prot_consumidas - target_prot
 
+fuga_detectada = False
+macro_roto = ""
+comida_culpable = ""
+aporte_culpable = 0.0
+
+# Detectar la mayor fuga matemáticamente y rastrear el culpable en el DataFrame de hoy
+if exceso_grasas > 0 and exceso_grasas >= max(exceso_carbos, exceso_prot):
+    fuga_detectada = True
+    macro_roto = "Grasas"
+    if not df_hoy.empty and 'Grasas' in df_hoy.columns:
+        idx_max = df_hoy['Grasas'].idxmax()
+        comida_culpable = df_hoy.loc[idx_max, 'Descripción']
+        aporte_culpable = df_hoy.loc[idx_max, 'Grasas']
+elif exceso_carbos > 0 and exceso_carbos >= max(exceso_grasas, exceso_prot):
+    fuga_detectada = True
+    macro_roto = "Carbohidratos"
+    if not df_hoy.empty and 'Carbohidratos' in df_hoy.columns:
+        idx_max = df_hoy['Carbohidratos'].idxmax()
+        comida_culpable = df_hoy.loc[idx_max, 'Descripción']
+        aporte_culpable = df_hoy.loc[idx_max, 'Carbohidratos']
+elif exceso_prot > 0:
+    fuga_detectada = True
+    macro_roto = "Proteínas"
+    if not df_hoy.empty and 'Proteínas' in df_hoy.columns:
+        idx_max = df_hoy['Proteínas'].idxmax()
+        comida_culpable = df_hoy.loc[idx_max, 'Descripción']
+        aporte_culpable = df_hoy.loc[idx_max, 'Proteínas']
+
+# Ensamblaje del Insight Dinámico Base
 if kcal_consumidas < limite_deficit:
     estado_color = "🔵 ZONA DE DÉFICIT"
-    insight = f"Estás en déficit agresivo. Margen de **{int(limite_deficit - kcal_consumidas)} Kcal** antes de límite recomendado."
+    base_insight = f"Estás en déficit agresivo. Margen de **{int(limite_deficit - kcal_consumidas)} Kcal** antes de límite recomendado."
 elif limite_deficit <= kcal_consumidas <= limite_mantenimiento:
     estado_color = "🟢 ZONA DE MANTENIMIENTO"
-    insight = f"Cuerpo de control estabilizado. Quedan **{int(limite_mantenimiento - kcal_consumidas)} Kcal** para ganar peso."
+    base_insight = f"Cuerpo de control estabilizado. Quedan **{int(limite_mantenimiento - kcal_consumidas)} Kcal** para ganar peso."
 else:
     estado_color = "🔴 ZONA DE SUPERÁVIT"
-    insight = "Estás construyendo masa o almacenando grasa. Superaste el mantenimiento."
+    base_insight = "Estás construyendo masa o almacenando grasa. Superaste el mantenimiento."
+
+# Inyectamos el Auditor de Fugas a la UI (Transforma el insight genérico en maniobra táctica)
+if fuga_detectada:
+    insight = f"{base_insight}<br><br>🚨 <b>AUDITOR DE FUGAS:</b> Límite perforado en <b>{macro_roto}</b>. El mayor infractor hoy fue: <i>'{comida_culpable}'</i> (aportó {aporte_culpable}g crudos).<br><b>Maniobra Sugerida:</b> Si mañana repites este plato, córtale el aceite, aderezos o masas de acompañamiento a la mitad para que entre en tu presupuesto de corte."
+else:
+    insight = f"{base_insight}<br><br>🛡️ <b>AUDITOR DE FUGAS:</b> Chasis estabilizado. Ningún macro estructural ha roto su límite objetivo."
+
+
+st.markdown("---")
+st.subheader("🔥 Balance Energético Dinámico (Hoy)")
 
 porcentaje_llenado = min((kcal_consumidas / limite_hipertrofia), 1.0) if limite_hipertrofia > 0 else 0
 
@@ -186,7 +227,8 @@ with col2:
     st.progress(porcentaje_llenado)
     st.markdown(f"""
     **TDEE Calculado:** {int(tdee)} Kcal  *(BMR: {int(bmr)} | Pesas: +{bonus_entrenamiento} | Pasos: +{int(bonus_pasos)})*
-    <br>💡 **Insight HD:** {insight} *(Incluye +{stock_critico_pct}% de Margen de Error por Stock Crítico)*
+    <br>💡 **Insight HD:** {insight}
+    <br>*(Nota: Cálculos incluyen +{stock_critico_pct}% de Margen de Error por Stock Crítico)*
     """, unsafe_allow_html=True)
 
 st.markdown("---")
