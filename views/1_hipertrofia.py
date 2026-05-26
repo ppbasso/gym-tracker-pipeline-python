@@ -6,31 +6,27 @@ import re
 import streamlit as st
 import altair as alt
 import json
-import pytz # <-- AÑADIDA: Para control de zona horaria
+import pytz 
 
 # ==========================================
-# 1. EXTRACT: Conexión a Google Sheets (Data Warehouse 360°)
+# 1. EXTRACT: Conexión a Google Sheets (Data Warehouse)
 # ==========================================
 @st.cache_data(ttl=300)
 def load_data():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
-    
-    # Extraemos el JSON crudo desde los secretos de Streamlit
     creds_dict = json.loads(st.secrets["google_credentials"])
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
-    
     client = gspread.authorize(creds)
     sheet_id = "1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI"
     doc = client.open_by_key(sheet_id)
     
-    # INYECCIÓN 360: Extraemos Entrenamiento y Mediciones Biométricas
+    # Extraemos Entrenamiento y Mediciones Biométricas
     df_testbot = pd.DataFrame(doc.worksheet("TESTbot").get_all_records())
     df_med = pd.DataFrame(doc.worksheet("Mediciones").get_all_records())
-    
     return df_testbot, df_med
 
 # ==========================================
-# 2. TRANSFORM: ETL y Auditoría Biomecánica
+# 2. TRANSFORM: ETL y Auditoría Silenciosa
 # ==========================================
 def extract_real_weight(row):
     base_w_str = str(row['Peso Proyectado']).lower().replace('kg', '').strip()
@@ -38,7 +34,6 @@ def extract_real_weight(row):
     except: base_w = np.nan
         
     nota = str(row['Notas']).lower()
-    
     for prefix in ['peso real:', 'peso real', 'sigo con', 'estoy con']:
         if prefix in nota:
             m = re.search(rf'{prefix}\s*(\d+\.?\d*)', nota)
@@ -49,13 +44,9 @@ def extract_real_weight(row):
     
     m_con = re.search(r'con\s*(\d+\.?\d*)\s*kg', nota)
     if m_con: return float(m_con.group(1))
-
     return base_w
 
 def get_tier_biomecanico(ej):
-    # --- EXPLICACIÓN DIDÁCTICA ---
-    # Tier 1 (Compuestos): Ejercicios multiarticulares pesados. Se exige progresión de E1RM.
-    # Tier 2 (Aislamiento): Palancas cortas. Limite mecánico natural. El éxito es mantener peso/tensión.
     compuestos = [
         "Remo con Barra", "Press con Mancuernas Plano", "Press Inclinado con Mancuernas", 
         "Remo Inclinado con Mancuernas", "Remo a Una Mano con Mancuerna", 
@@ -64,13 +55,17 @@ def get_tier_biomecanico(ej):
     ]
     return "Tier 1 (Compuesto)" if ej in compuestos else "Tier 2 (Aislamiento)"
 
+def limpiar_flotante(val):
+    if pd.isna(val) or str(val).strip() == "": return 0.0
+    try: return float(str(val).replace(',', '.').strip())
+    except: return 0.0
+
 @st.cache_data(ttl=300)
 def process_data(df):
     df = df[df['Ejercicio'] != ''].copy()
     
-    # --- ETL: NORMALIZACIÓN DE LLAVE PRIMARIA ---
+    # Normalización
     df['Ejercicio'] = df['Ejercicio'].str.replace(r'\s*\(\d+\)', '', regex=True).str.strip()
-    
     ALIAS_MAP = {
         "Triceps Skull Crushers con Mancuernas": "Extension de Triceps con Mancuernas",
         "Extension de Triceps sobre cabeza": "Extension de Triceps con Mancuerna sobre cabeza",
@@ -82,8 +77,7 @@ def process_data(df):
     df = df.dropna(subset=['Fecha'])
     
     for c in ['S1', 'S2', 'S3']: df[c] = pd.to_numeric(df[c], errors='coerce').fillna(0)
-    df['Reps_Efectivas'] = np.where(df['S3'] > 0, df['S3'],
-                                    np.where(df['S2'] > 0, df['S2'], df['S1']))
+    df['Reps_Efectivas'] = np.where(df['S3'] > 0, df['S3'], np.where(df['S2'] > 0, df['S2'], df['S1']))
     
     df['Tiene_Descarga'] = df['Notas'].str.contains('descarga', case=False, na=False)
     fechas_descarga = df[df['Tiene_Descarga']]['Fecha'].unique()
@@ -92,33 +86,27 @@ def process_data(df):
     
     df['Peso_Proyectado_Num'] = df['Peso Proyectado'].astype(str).str.extract(r'(\d+\.?\d*)').astype(float)
     df['Peso_Real'] = df.apply(extract_real_weight, axis=1)
-    
     df['Reps_Min_Meta'] = df['Sets x Reps'].astype(str).str.extract(r'x\s*(\d+)').astype(float).fillna(8)
     
     df['E1RM_Meta'] = df['Peso_Proyectado_Num'] / (1.0278 - (0.0278 * df['Reps_Min_Meta']))
-    
-    df['E1RM'] = np.where(
-        (df['Reps_Efectivas'] > 0), 
-        df['Peso_Real'] / (1.0278 - (0.0278 * df['Reps_Efectivas'])),
-        np.nan
-    )
+    df['E1RM'] = np.where((df['Reps_Efectivas'] > 0), df['Peso_Real'] / (1.0278 - (0.0278 * df['Reps_Efectivas'])), np.nan)
     
     df['E1RM_Meta'] = df['E1RM_Meta'].round(2)
     df['E1RM'] = df['E1RM'].round(2)
     
-    # INYECCIÓN 360: Clasificación Biomecánica
+    # Motor Lógico Silencioso: Clasificación Biomecánica
     df['Tier'] = df['Ejercicio'].apply(get_tier_biomecanico)
     
-    # Evaluación Contextual: Tier 1 exige Fuerza, Tier 2 exige solo mantener tensión.
+    # Traducción estricta a vocabulario clásico (sin inventos de "Tensión Máxima")
     df['Resultado'] = np.where(
         df['Es_Descarga'], '🔄 Descarga',
         np.where(
             df['Tier'] == 'Tier 1 (Compuesto)',
-            # Lógica dura para multiarticulares
             np.where(df['E1RM'] > df['E1RM_Meta'] * 1.01, '🟢 Meta Superada',
-            np.where(df['E1RM'] >= df['E1RM_Meta'] * 0.98, '🟡 Consolidado', '🔴 Fallo T1')),
-            # Lógica científica para aislamiento (Límite biomecánico natural)
-            np.where(df['E1RM'] >= df['E1RM_Meta'] * 0.90, '🟢 Tensión Máxima (Tier 2)', '🔴 Pérdida de Fuerza')
+            np.where(df['E1RM'] >= df['E1RM_Meta'] * 0.98, '🟡 Consolidado', '🔴 Fallo')),
+            # En aislamiento, mantener el 90%+ de la fuerza meta es Consolidar (Límite biomecánico natural)
+            np.where(df['E1RM'] > df['E1RM_Meta'] * 1.01, '🟢 Meta Superada',
+            np.where(df['E1RM'] >= df['E1RM_Meta'] * 0.90, '🟡 Consolidado', '🔴 Fallo'))
         )
     )
     
@@ -130,17 +118,13 @@ def process_data(df):
         df_ej = df[df['Ejercicio'] == ej]
         futuras = df_ej[df_ej['Fecha'] >= hoy_dinamico]['Fecha']
         prox_fecha = futuras.min() if not futuras.empty else pd.Timestamp('2099-12-31')
-        es_activo = prox_fecha != pd.Timestamp('2099-12-31')
-
         dict_status[ej] = {
-            'activo': es_activo,
+            'activo': prox_fecha != pd.Timestamp('2099-12-31'),
             'prox_fecha': prox_fecha
         }
         
     return df, dict_status
 
-
-# --- RED FINA DE CATEGORIZACIÓN ---
 def get_grupo(ej):
     DICCIONARIO_BIOMECANICO = {
         "Press con Mancuernas Plano": "Pecho", "Press Inclinado con Mancuernas": "Pecho",
@@ -150,7 +134,6 @@ def get_grupo(ej):
         "Goblet Squat con Mancuerna": "Piernas", "Peso Muerto Rumano con Mancuernas": "Piernas"
     }
     return DICCIONARIO_BIOMECANICO.get(ej, "Otros")
-
 
 # ==========================================
 # 3. COMPONENTES VISUALES
@@ -168,14 +151,12 @@ def render_chart_dual(df_ej_real):
     
     line_meta = base.mark_line(color='#FFA500', size=4).encode(y=alt.Y('E1RM_Meta:Q', scale=alt.Scale(zero=False), title='Fuerza (kg)'))
     points_meta = base.mark_point(color='#FFA500', size=90, filled=True).encode(
-        y='E1RM_Meta:Q',
-        tooltip=[alt.Tooltip('Fecha:T', format='%d-%m-%Y', title='Fecha'), alt.Tooltip('E1RM_Meta:Q', title='🎯 Meta')]
+        y='E1RM_Meta:Q', tooltip=[alt.Tooltip('Fecha:T', format='%d-%m-%Y', title='Fecha'), alt.Tooltip('E1RM_Meta:Q', title='🎯 Meta')]
     )
     
     line_real = base.mark_line(color='#00FFFF', size=4).encode(y='E1RM:Q')
     points_real = base.mark_point(color='#00FFFF', size=150, filled=True, opacity=0.9).encode(
-        y='E1RM:Q',
-        tooltip=[alt.Tooltip('Fecha:T', format='%d-%m-%Y', title='Fecha'), alt.Tooltip('Peso_Real:Q', title='Peso Real'), alt.Tooltip('E1RM:Q', title='⚡ E1RM')]
+        y='E1RM:Q', tooltip=[alt.Tooltip('Fecha:T', format='%d-%m-%Y', title='Fecha'), alt.Tooltip('Peso_Real:Q', title='Peso Real'), alt.Tooltip('E1RM:Q', title='⚡ E1RM')]
     )
     
     chart = alt.layer(line_meta, points_meta, line_real, points_real).resolve_scale(y='shared').properties(height=260).configure_view(strokeWidth=0).interactive(bind_y=False)
@@ -194,15 +175,11 @@ def render_ejercicio_bloque(ej, df_g, is_activo=True):
     ultimo = df_ej_real.iloc[-1]
     
     m1, m2 = st.columns(2)
-    
     if ultimo['Es_Descarga']:
-        e1rm_display = "🔄 Descarga"
-        detalle_texto = "Semana de recuperación activa"
+        e1rm_display, detalle_texto = "🔄 Descarga", "Semana de recuperación activa"
     else:
         e1rm_display = f"{ultimo['E1RM']} kg"
-        # Etiqueta visual para distinguir la palanca
-        badge_tier = "🔥 Multiarticular" if ultimo['Tier'] == "Tier 1 (Compuesto)" else "🎯 Aislamiento"
-        detalle_texto = f"{badge_tier} | Real: {ultimo['Peso_Real']:g}kg x {int(ultimo['Reps_Efectivas'])}"
+        detalle_texto = f"⚡ Real: {ultimo['Peso_Real']:g}kg x {int(ultimo['Reps_Efectivas'])} | 🎯 Meta: {ultimo['Peso_Proyectado_Num']:g}kg x {int(ultimo['Reps_Min_Meta'])}"
     
     m1.metric("Fuerza Actual (E1RM)", e1rm_display, delta=detalle_texto, delta_color="off")
     m2.metric("Auditoría Biomecánica", ultimo['Resultado'])
@@ -213,23 +190,16 @@ def render_ejercicio_bloque(ej, df_g, is_activo=True):
         df_disp = df_ej_real.copy()
         df_disp['Fecha_Str'] = df_disp['Fecha'].dt.strftime('%d-%m-%Y')
         df_disp['E1RM_Str'] = df_disp.apply(lambda row: "Descarga" if row['Es_Descarga'] else f"{row['E1RM']:.2f}", axis=1)
-        
         df_disp = df_disp[['Fecha_Str', 'Peso_Proyectado_Num', 'Reps_Min_Meta', 'Peso_Real', 'Reps_Efectivas', 'E1RM_Meta', 'E1RM_Str', 'Resultado', 'Fecha']]
         df_disp.columns = ['Fecha', 'Peso Meta', 'Reps Meta', 'Peso Real', 'Reps Reales', 'E1RM Meta', 'E1RM Real', 'Auditoría', '_fecha_sort']
-        
         df_disp = df_disp.sort_values(by='_fecha_sort', ascending=False).drop(columns=['_fecha_sort'])
         st.dataframe(df_disp, hide_index=True, width="stretch")
     st.markdown("<hr style='border:1px dashed #ccc'>", unsafe_allow_html=True)
 
 
 # ==========================================
-# 4. FRONT-END: UX PRINCIPAL Y ORÁCULO 360°
+# 4. FRONT-END: UX PRINCIPAL Y MOTOR METABÓLICO
 # ==========================================
-def limpiar_flotante(val):
-    if pd.isna(val) or str(val).strip() == "": return 0.0
-    try: return float(str(val).replace(',', '.').strip())
-    except: return 0.0
-
 df_raw, df_med_raw = load_data()
 df_full, status_map = process_data(df_raw)
 df_full['Grupo'] = df_full['Ejercicio'].apply(get_grupo)
@@ -241,21 +211,24 @@ if df_real.empty:
     st.warning("No hay datos ejecutados. Esperando registros.")
     st.stop()
 
-# --- MOTOR DE TRIANGULACIÓN 360° ---
-st.subheader(f"🔮 ORÁCULO 360° (Cruce Metabólico y Biomecánico)")
-
-# 1. Fuerza Bruta (Solo Tier 1 evaluado)
+# --- CÁLCULO DE MÉTRICAS GLOBALES ("13 de 15") ---
 activos_nombres = [ej for ej, info in status_map.items() if info['activo']]
-df_radar_t1 = df_real[(df_real['Ejercicio'].isin(activos_nombres)) & (df_real['Tier'] == 'Tier 1 (Compuesto)')]
-ultimas_sesiones_t1 = df_radar_t1[~df_radar_t1['Es_Descarga']].sort_values('Fecha').groupby('Ejercicio').last()
+df_radar = df_real[df_real['Ejercicio'].isin(activos_nombres)]
+ultimas_sesiones = df_radar[~df_radar['Es_Descarga']].sort_values('Fecha').groupby('Ejercicio').last()
 
+total_auditados = len(ultimas_sesiones)
+if total_auditados > 0:
+    fallos = len(ultimas_sesiones[ultimas_sesiones['Resultado'] == '🔴 Fallo'])
+    exitos = total_auditados - fallos
+    tasa_exito = (exitos / total_auditados) * 100
+    lista_exitos = ultimas_sesiones[ultimas_sesiones['Resultado'] != '🔴 Fallo'].index.tolist()
+    lista_fallos = ultimas_sesiones[ultimas_sesiones['Resultado'] == '🔴 Fallo'].index.tolist()
+
+# --- MOTOR DE DIAGNÓSTICO SILENCIOSO (Cruce de Datos sin UI de Tarjetas) ---
+ultimas_sesiones_t1 = ultimas_sesiones[ultimas_sesiones['Tier'] == 'Tier 1 (Compuesto)']
 total_t1 = len(ultimas_sesiones_t1)
-tasa_exito_t1 = 0
-if total_t1 > 0:
-    fallos_t1 = len(ultimas_sesiones_t1[ultimas_sesiones_t1['Resultado'] == '🔴 Fallo T1'])
-    tasa_exito_t1 = ((total_t1 - fallos_t1) / total_t1) * 100
+tasa_exito_t1 = ((total_t1 - len(ultimas_sesiones_t1[ultimas_sesiones_t1['Resultado'] == '🔴 Fallo'])) / total_t1) * 100 if total_t1 > 0 else 100
 
-# 2. Biometría (Mediciones)
 df_med_raw['Peso_Clean'] = df_med_raw['Peso (kg)'].apply(limpiar_flotante)
 df_med_raw['Cintura_Clean'] = df_med_raw['Cintura (cm)'].apply(limpiar_flotante)
 df_med_raw['Fecha'] = pd.to_datetime(df_med_raw['Fecha'], dayfirst=True, errors='coerce')
@@ -267,39 +240,45 @@ cinturas_validas = df_med[df_med['Cintura_Clean'] > 0]['Cintura_Clean'].tolist()
 delta_peso = pesos_validos[-1] - pesos_validos[-2] if len(pesos_validos) >= 2 else 0
 delta_cintura = cinturas_validas[-1] - cinturas_validas[-2] if len(cinturas_validas) >= 2 else 0
 
-# 3. Lógica del Triangulador
 tendencia_fuerza = "Baja" if tasa_exito_t1 < 60 else "Alta/Estable"
 tendencia_peso = "Sube" if delta_peso > 0.5 else ("Baja" if delta_peso < -0.5 else "Estable")
 tendencia_cintura = "Sube" if delta_cintura > 0.5 else ("Baja" if delta_cintura < -0.5 else "Estable")
 
+# Lógica del diagnóstico de campo
 if tendencia_fuerza == "Alta/Estable" and tendencia_peso == "Baja" and tendencia_cintura == "Baja":
-    diag = "🟢 RECOMPOSICIÓN PERFECTA (Quema Grasa + Retención/Ganancia Muscular)"
-    accion = "El déficit está funcionando de forma impecable. Tu fuerza bruta (Tier 1) se mantiene o sube, y estás perdiendo perímetro de cintura. NO TOQUES NADA. La tensión mecánica en aislamiento es óptima."
-elif tendencia_fuerza == "Alta/Estable" and (tendencia_peso == "Sube" or tendencia_peso == "Estable") and tendencia_cintura != "Baja":
-    diag = "🟡 SUPERÁVIT OCULTO (Falso Déficit)"
-    accion = "Tu fuerza está intacta y tu peso sube, pero tu cintura no baja. Estás comiendo más de lo que crees o quemando menos de lo que dice el reloj. ⚡ ACCIÓN: Ve al panel de Nutrición y sube el 'Stock Crítico' a 20% para forzar un déficit real."
+    consejo_accionable = "Recomposición perfecta. Quema de grasa con retención muscular confirmada por métricas. No toques nada."
+    estado_snc, color_delta = "🟢 RECUPERACIÓN ÓPTIMA", "normal"
+elif tendencia_fuerza == "Alta/Estable" and tendencia_peso != "Baja" and tendencia_cintura != "Baja":
+    consejo_accionable = "Superávit oculto. Fuerza intacta pero la barriga no baja. Ve al panel de Nutrición y sube el 'Stock Crítico' al 20% para forzar déficit real."
+    estado_snc, color_delta = "🟡 FALSO DÉFICIT", "off"
 elif tendencia_fuerza == "Baja" and tendencia_peso == "Baja":
-    diag = "🔴 CATABOLISMO CRÍTICO (Déficit Agresivo / SNC Frito)"
-    accion = "Estás perdiendo fuerza bruta en ejercicios compuestos y perdiendo peso. Tu cuerpo está canibalizando músculo. ⚡ ACCIÓN: Exige a La Gema una 'Recarga de Carbohidratos' de 48 hrs, o aplica Excéntrica Lenta (5s) bajando 15% los pesos para proteger las articulaciones hoy."
+    consejo_accionable = "Catabolismo crítico. Fuerza cayendo en compuestos. Exige una recarga de carbohidratos (refeed) para proteger la masa magra hoy."
+    estado_snc, color_delta = "🔴 SNC FATIGADO", "inverse"
 elif tendencia_fuerza == "Baja" and tendencia_peso == "Sube":
-    diag = "🔴 INFLAMACIÓN SISTÉMICA / SOBREENTRENAMIENTO"
-    accion = "Pierdes fuerza pero ganas peso. Esto es retención de líquidos por cortisol (estrés puro) o daño articular latente. ⚡ ACCIÓN: SEMANA DE DESCARGA OBLIGATORIA. Reduce todos los pesos al 50% para vaciar el vaso de estrés."
+    consejo_accionable = "Fuerza cae y peso sube (retención por cortisol/estrés sistémico). Reduce pesos al 50% en compuestos para vaciar fatiga acumulada."
+    estado_snc, color_delta = "🔴 ALERTA CORTISOL", "inverse"
 else:
-    diag = "🔵 ESTADO METABÓLICO TRANSICIONAL"
-    accion = "Cuerpo estabilizando fluidos. Enfócate en los ejercicios Tier 1 y asegúrate de llegar al fallo técnico. Mide tu cintura el próximo domingo para confirmar rumbo biológico."
+    consejo_accionable = "Metabolismo estabilizando. Cumple las metas de la planilla y evalúa en el próximo pesaje dominical."
+    estado_snc, color_delta = "🔵 FASE TRANSICIONAL", "off"
 
-# Render de Tarjetas del Oráculo
-st.markdown(f"**Veredicto:** {diag}")
-st.info(f"**Directriz Táctica:** {accion}")
+# --- CABECERA RESTAURADA (CUMPLIMIENTO DE METAS) ---
+st.subheader(f"🎯 CUMPLIMIENTO DE METAS GLOBALES Y DIAGNÓSTICO")
 
-c1, c2, c3 = st.columns(3)
-c1.metric("Fuerza Tier 1 (Compuestos)", f"{tasa_exito_t1:.0f}% Éxito", delta=tendencia_fuerza, delta_color="normal" if tendencia_fuerza=="Alta/Estable" else "inverse")
-c2.metric("Tendencia Peso", f"{pesos_validos[-1] if pesos_validos else 0} kg", delta=f"{delta_peso:+.1f} kg", delta_color="inverse" if tendencia_peso=="Sube" else "normal")
-c3.metric("Tendencia Cintura", f"{cinturas_validas[-1] if cinturas_validas else 0} cm", delta=f"{delta_cintura:+.1f} cm", delta_color="inverse" if tendencia_cintura=="Sube" else "normal")
+if total_auditados > 0:
+    col1, col2 = st.columns(2)
+    col1.metric("Estado del Sistema Nervioso", estado_snc, delta=f"Tasa Global de Éxito: {tasa_exito:.0f}%", delta_color=color_delta)
+    col2.metric(f"Ejercicios Superando Meta", f"{exitos} de {total_auditados}")
+    
+    st.info(f"💡 **Directriz HD:** {consejo_accionable}")
+
+    with st.expander("Ver detalle general (Buscador Rápido de Fallos)"):
+        c1, c2 = st.columns(2)
+        c1.markdown("**🟢 Cumpliendo Meta:**\n" + ("\n".join([f"- {e}" for e in lista_exitos]) if lista_exitos else "Ninguno."))
+        c2.markdown("**🔴 Fallando:**\n" + ("\n".join([f"- {e}" for e in lista_fallos]) if lista_fallos else "Ninguno."))
 
 st.markdown("---")
 
-# --- MOTOR DE VISTA DUAL ---
+# --- MOTOR DE VISTA DUAL (BIOMECÁNICA VS OPERATIVA) ---
 modo_vista = st.radio(
     "🔄 Selecciona el Eje de Análisis:",
     ["🔬 Por Grupo Muscular (Biomecánica)", "⚙️ Por Módulos de Entrenamiento (Operativa)"],
@@ -381,7 +360,7 @@ else:
 
     st.markdown("---")
     with st.expander("⚫ HISTÓRICO / INACTIVOS (Cementerio)", expanded=False):
-        st.markdown("Ejercicios que ya no están programados a futuro, pero mantienen su registro de fuerza.")
+        st.markdown("Ejercicios que ya no están programados en el Excel a futuro, pero mantienen su registro de fuerza.")
         ejercicios_activos_ahora = MODULO_ALPHA + MODULO_OMEGA
         todos_los_ejercicios_bd = df_full['Ejercicio'].unique()
         ejercicios_inactivos = [ej for ej in todos_los_ejercicios_bd if ej not in ejercicios_activos_ahora]
