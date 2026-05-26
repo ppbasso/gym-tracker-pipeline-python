@@ -9,7 +9,7 @@ import json
 import pytz # <-- AÑADIDA: Para control de zona horaria
 
 # ==========================================
-# 1. EXTRACT: Conexión a Google Sheets (Vía Secrets)
+# 1. EXTRACT: Conexión a Google Sheets (Data Warehouse 360°)
 # ==========================================
 @st.cache_data(ttl=300)
 def load_data():
@@ -21,11 +21,16 @@ def load_data():
     
     client = gspread.authorize(creds)
     sheet_id = "1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda78tI"
-    sheet = client.open_by_key(sheet_id).worksheet("TESTbot")
-    return pd.DataFrame(sheet.get_all_records())
+    doc = client.open_by_key(sheet_id)
+    
+    # INYECCIÓN 360: Extraemos Entrenamiento y Mediciones Biométricas
+    df_testbot = pd.DataFrame(doc.worksheet("TESTbot").get_all_records())
+    df_med = pd.DataFrame(doc.worksheet("Mediciones").get_all_records())
+    
+    return df_testbot, df_med
 
 # ==========================================
-# 2. TRANSFORM: ETL y Auditoría Pitbull
+# 2. TRANSFORM: ETL y Auditoría Biomecánica
 # ==========================================
 def extract_real_weight(row):
     base_w_str = str(row['Peso Proyectado']).lower().replace('kg', '').strip()
@@ -47,12 +52,23 @@ def extract_real_weight(row):
 
     return base_w
 
+def get_tier_biomecanico(ej):
+    # --- EXPLICACIÓN DIDÁCTICA ---
+    # Tier 1 (Compuestos): Ejercicios multiarticulares pesados. Se exige progresión de E1RM.
+    # Tier 2 (Aislamiento): Palancas cortas. Limite mecánico natural. El éxito es mantener peso/tensión.
+    compuestos = [
+        "Remo con Barra", "Press con Mancuernas Plano", "Press Inclinado con Mancuernas", 
+        "Remo Inclinado con Mancuernas", "Remo a Una Mano con Mancuerna", 
+        "Press de Hombro con Mancuernas Sentado", "Goblet Squat con Mancuerna", 
+        "Peso Muerto Rumano con Mancuernas"
+    ]
+    return "Tier 1 (Compuesto)" if ej in compuestos else "Tier 2 (Aislamiento)"
+
 @st.cache_data(ttl=300)
 def process_data(df):
     df = df[df['Ejercicio'] != ''].copy()
     
     # --- ETL: NORMALIZACIÓN DE LLAVE PRIMARIA ---
-    # Extirpa sufijos tácticos de inclinación de banco (Ej: "Remo (4)" -> "Remo")
     df['Ejercicio'] = df['Ejercicio'].str.replace(r'\s*\(\d+\)', '', regex=True).str.strip()
     
     ALIAS_MAP = {
@@ -90,88 +106,49 @@ def process_data(df):
     df['E1RM_Meta'] = df['E1RM_Meta'].round(2)
     df['E1RM'] = df['E1RM'].round(2)
     
+    # INYECCIÓN 360: Clasificación Biomecánica
+    df['Tier'] = df['Ejercicio'].apply(get_tier_biomecanico)
+    
+    # Evaluación Contextual: Tier 1 exige Fuerza, Tier 2 exige solo mantener tensión.
     df['Resultado'] = np.where(
         df['Es_Descarga'], '🔄 Descarga',
-        np.where(df['E1RM'] > df['E1RM_Meta'] * 1.01, '🟢 Meta Superada',
-        np.where(df['E1RM'] >= df['E1RM_Meta'] * 0.98, '🟡 Consolidado', '🔴 Fallo'))
+        np.where(
+            df['Tier'] == 'Tier 1 (Compuesto)',
+            # Lógica dura para multiarticulares
+            np.where(df['E1RM'] > df['E1RM_Meta'] * 1.01, '🟢 Meta Superada',
+            np.where(df['E1RM'] >= df['E1RM_Meta'] * 0.98, '🟡 Consolidado', '🔴 Fallo T1')),
+            # Lógica científica para aislamiento (Límite biomecánico natural)
+            np.where(df['E1RM'] >= df['E1RM_Meta'] * 0.90, '🟢 Tensión Máxima (Tier 2)', '🔴 Pérdida de Fuerza')
+        )
     )
     
     df = df.sort_values(by=['Ejercicio', 'Fecha'])
     
-    # --- CORRECCIÓN LÍNEA 86: Fecha Dinámica Afeitada (Normalize) ---
-    # pd.Timestamp.now(tz='America/Santiago') nos da la fecha/hora actual en Chile.
-    # .normalize() la recorta a las 00:00:00, y .tz_localize(None) quita el offset para poder compararla con las fechas del Excel (que son naives).
     hoy_dinamico = pd.Timestamp.now(tz='America/Santiago').normalize().tz_localize(None)
     dict_status = {}
     for ej in df['Ejercicio'].unique():
         df_ej = df[df['Ejercicio'] == ej]
-        ultima_vez = df_ej['Fecha'].max()
         futuras = df_ej[df_ej['Fecha'] >= hoy_dinamico]['Fecha']
         prox_fecha = futuras.min() if not futuras.empty else pd.Timestamp('2099-12-31')
         es_activo = prox_fecha != pd.Timestamp('2099-12-31')
-        
-        # --- INYECCIÓN: ALGORITMO RADAR ANTI-ESTANCAMIENTO (STRIKE 3) ---
-        es_estancado = False
-        if es_activo:
-            # Filtramos solo sesiones efectivas (sin descargas)
-            df_efectivo = df_ej[(df_ej['Reps_Efectivas'] > 0) & (~df_ej['Es_Descarga'])].sort_values('Fecha')
-            if len(df_efectivo) >= 3:
-                # Tomamos las últimas 3 sesiones
-                ultimas_3 = df_efectivo.tail(3)
-                peso_sesion_1 = ultimas_3.iloc[0]['Peso_Real']
-                reps_sesion_1 = ultimas_3.iloc[0]['Reps_Efectivas']
-                peso_sesion_3 = ultimas_3.iloc[2]['Peso_Real']
-                reps_sesion_3 = ultimas_3.iloc[2]['Reps_Efectivas']
-                
-                # Regla de estancamiento SNC: Si el peso no subió Y las reps tampoco en 3 sesiones, está muerto.
-                if (peso_sesion_3 <= peso_sesion_1) and (reps_sesion_3 <= reps_sesion_1):
-                    es_estancado = True
 
         dict_status[ej] = {
-            # --- NUEVA LÓGICA DE VIDA/MUERTE ---
-            # Un ejercicio es activo si y solo si tiene una fecha programada en el futuro (hoy en adelante).
             'activo': es_activo,
-            'prox_fecha': prox_fecha,
-            'estancado': es_estancado # <-- Inyectado: Bandera de Radar
+            'prox_fecha': prox_fecha
         }
         
     return df, dict_status
 
 
-# --- CORRECCIÓN: RED FINA DE CATEGORIZACIÓN (ANTIFALSOS POSITIVOS) ---
+# --- RED FINA DE CATEGORIZACIÓN ---
 def get_grupo(ej):
-    # DICCIONARIO ABSOLUTO (Mapeo Estricto 1 a 1 actualizados Q2)
     DICCIONARIO_BIOMECANICO = {
-        # PECHO
-        "Press con Mancuernas Plano": "Pecho",
-        "Press Inclinado con Mancuernas": "Pecho",
-        
-        # ESPALDA
-        "Remo con Barra": "Espalda",
-        "Remo a Una Mano con Mancuerna": "Espalda",
-        "Remo Inclinado con Mancuernas": "Espalda",
-        
-        # HOMBROS
-        "Press de Hombro con Mancuernas Sentado": "Hombros",
-        "Shrugs (Encogimientos) Sentado": "Hombros", # <-- Q2 AÑADIDO
-        "Elevaciones Laterales con Mancuernas": "Hombros",
-        "Pájaro (Vuelos Posteriores)": "Hombros",
-        
-        # BRAZOS
-        "Curl Biceps con Barra Recta": "Brazos",
-        "Curl Bíceps Alterno con Mancuernas": "Brazos", # <-- Q2 AÑADIDO
-        "Zottman Curls": "Brazos", # <-- Q2 AÑADIDO
-        "Extension de Triceps con Mancuerna sobre cabeza": "Brazos",
-        "Hammer Curl Biceps con Mancuernas Sentado": "Brazos",
-        "Extension de Triceps con Mancuernas": "Brazos",
-        "Curl Bicep Inclinado con Mancuernas": "Brazos",
-        "Curl Bicep Concentrado": "Brazos",
-        
-        # PIERNAS
-        "Goblet Squat con Mancuerna": "Piernas",
-        "Peso Muerto Rumano con Mancuernas": "Piernas"
+        "Press con Mancuernas Plano": "Pecho", "Press Inclinado con Mancuernas": "Pecho",
+        "Remo con Barra": "Espalda", "Remo a Una Mano con Mancuerna": "Espalda", "Remo Inclinado con Mancuernas": "Espalda",
+        "Press de Hombro con Mancuernas Sentado": "Hombros", "Shrugs (Encogimientos) Sentado": "Hombros", "Elevaciones Laterales con Mancuernas": "Hombros", "Pájaro (Vuelos Posteriores)": "Hombros",
+        "Curl Biceps con Barra Recta": "Brazos", "Curl Bíceps Alterno con Mancuernas": "Brazos", "Zottman Curls": "Brazos", "Extension de Triceps con Mancuerna sobre cabeza": "Brazos", "Hammer Curl Biceps con Mancuernas Sentado": "Brazos", "Extension de Triceps con Mancuernas": "Brazos", "Curl Bicep Inclinado con Mancuernas": "Brazos", "Curl Bicep Concentrado": "Brazos",
+        "Goblet Squat con Mancuerna": "Piernas", "Peso Muerto Rumano con Mancuernas": "Piernas"
     }
-    
     return DICCIONARIO_BIOMECANICO.get(ej, "Otros")
 
 
@@ -189,34 +166,22 @@ def render_chart_dual(df_ej_real):
         x=alt.X('Fecha:T', axis=alt.Axis(format='%d-%m', title='Día-Mes', labelAngle=-45), scale=alt.Scale(domain=[min_date, max_date]))
     )
     
-    line_meta = base.mark_line(color='#FFA500', size=4).encode(
-        y=alt.Y('E1RM_Meta:Q', scale=alt.Scale(zero=False), title='Fuerza (kg)')
-    )
+    line_meta = base.mark_line(color='#FFA500', size=4).encode(y=alt.Y('E1RM_Meta:Q', scale=alt.Scale(zero=False), title='Fuerza (kg)'))
     points_meta = base.mark_point(color='#FFA500', size=90, filled=True).encode(
         y='E1RM_Meta:Q',
-        tooltip=[
-            alt.Tooltip('Fecha:T', format='%d-%m-%Y', title='Fecha'),
-            alt.Tooltip('Peso_Proyectado_Num:Q', title='Peso Meta (kg)'),
-            alt.Tooltip('Reps_Min_Meta:Q', title='Reps Exigidas'),
-            alt.Tooltip('E1RM_Meta:Q', title='🎯 E1RM Meta (Fuerza)')
-        ]
+        tooltip=[alt.Tooltip('Fecha:T', format='%d-%m-%Y', title='Fecha'), alt.Tooltip('E1RM_Meta:Q', title='🎯 Meta')]
     )
     
     line_real = base.mark_line(color='#00FFFF', size=4).encode(y='E1RM:Q')
     points_real = base.mark_point(color='#00FFFF', size=150, filled=True, opacity=0.9).encode(
         y='E1RM:Q',
-        tooltip=[
-            alt.Tooltip('Fecha:T', format='%d-%m-%Y', title='Fecha'),
-            alt.Tooltip('Peso_Real:Q', title='Peso Levantado (kg)'),
-            alt.Tooltip('Reps_Efectivas:Q', title='Reps Logradas'),
-            alt.Tooltip('E1RM:Q', title='⚡ E1RM Real (Fuerza)')
-        ]
+        tooltip=[alt.Tooltip('Fecha:T', format='%d-%m-%Y', title='Fecha'), alt.Tooltip('Peso_Real:Q', title='Peso Real'), alt.Tooltip('E1RM:Q', title='⚡ E1RM')]
     )
     
     chart = alt.layer(line_meta, points_meta, line_real, points_real).resolve_scale(y='shared').properties(height=260).configure_view(strokeWidth=0).interactive(bind_y=False)
     st.altair_chart(chart, width="stretch")
 
-def render_ejercicio_bloque(ej, df_g, is_activo=True, is_estancado=False): # <-- MODIFICADO: Switch de estado activo/estancado inyectado
+def render_ejercicio_bloque(ej, df_g, is_activo=True): 
     df_ej = df_g[df_g['Ejercicio'] == ej].copy()
     df_ej_real = df_ej[df_ej['Reps_Efectivas'] > 0].copy()
     
@@ -227,10 +192,6 @@ def render_ejercicio_bloque(ej, df_g, is_activo=True, is_estancado=False): # <--
         return
         
     ultimo = df_ej_real.iloc[-1]
-
-    # --- INYECCIÓN VISUAL MICRO: Tarjeta de Estancamiento ---
-    if is_activo and is_estancado:
-        st.error("🚨 **SNC ADAPTADO / ESTANCAMIENTO:** Llevas 3 sesiones sin mejorar peso ni repeticiones. Tu cuerpo ya se adaptó a este vector de fuerza. Solicita a *La Gema* que reemplace este ejercicio.")
     
     m1, m2 = st.columns(2)
     
@@ -239,17 +200,12 @@ def render_ejercicio_bloque(ej, df_g, is_activo=True, is_estancado=False): # <--
         detalle_texto = "Semana de recuperación activa"
     else:
         e1rm_display = f"{ultimo['E1RM']} kg"
-        detalle_texto = f"⚡ Real: {ultimo['Peso_Real']:g}kg x {int(ultimo['Reps_Efectivas'])} | 🎯 Meta: {ultimo['Peso_Proyectado_Num']:g}kg x {int(ultimo['Reps_Min_Meta'])}"
+        # Etiqueta visual para distinguir la palanca
+        badge_tier = "🔥 Multiarticular" if ultimo['Tier'] == "Tier 1 (Compuesto)" else "🎯 Aislamiento"
+        detalle_texto = f"{badge_tier} | Real: {ultimo['Peso_Real']:g}kg x {int(ultimo['Reps_Efectivas'])}"
     
     m1.metric("Fuerza Actual (E1RM)", e1rm_display, delta=detalle_texto, delta_color="off")
-    m2.metric("Resultado Auditoría", ultimo['Resultado'])
-    
-    st.markdown("""
-        <div style='margin-bottom: 5px; margin-top: -15px;'>
-            <span style='color:#FFA500; font-size:18px;'>■</span> <b>Naranja:</b> El Plan (Fuerza Meta) | 
-            <span style='color:#00FFFF; font-size:18px;'>■</span> <b>Celeste:</b> La Realidad (Fuerza Levantada)
-        </div>
-    """, unsafe_allow_html=True)
+    m2.metric("Auditoría Biomecánica", ultimo['Resultado'])
     
     render_chart_dual(df_ej_real)
     
@@ -267,9 +223,14 @@ def render_ejercicio_bloque(ej, df_g, is_activo=True, is_estancado=False): # <--
 
 
 # ==========================================
-# 4. FRONT-END: UX PRINCIPAL
+# 4. FRONT-END: UX PRINCIPAL Y ORÁCULO 360°
 # ==========================================
-df_raw = load_data()
+def limpiar_flotante(val):
+    if pd.isna(val) or str(val).strip() == "": return 0.0
+    try: return float(str(val).replace(',', '.').strip())
+    except: return 0.0
+
+df_raw, df_med_raw = load_data()
 df_full, status_map = process_data(df_raw)
 df_full['Grupo'] = df_full['Ejercicio'].apply(get_grupo)
 
@@ -280,49 +241,65 @@ if df_real.empty:
     st.warning("No hay datos ejecutados. Esperando registros.")
     st.stop()
 
-# --- RADAR GLOBAL SNC ---
-st.subheader(f"🎯 CUMPLIMIENTO DE METAS GLOBALES")
+# --- MOTOR DE TRIANGULACIÓN 360° ---
+st.subheader(f"🔮 ORÁCULO 360° (Cruce Metabólico y Biomecánico)")
 
+# 1. Fuerza Bruta (Solo Tier 1 evaluado)
 activos_nombres = [ej for ej, info in status_map.items() if info['activo']]
-df_radar = df_real[df_real['Ejercicio'].isin(activos_nombres)]
+df_radar_t1 = df_real[(df_real['Ejercicio'].isin(activos_nombres)) & (df_real['Tier'] == 'Tier 1 (Compuesto)')]
+ultimas_sesiones_t1 = df_radar_t1[~df_radar_t1['Es_Descarga']].sort_values('Fecha').groupby('Ejercicio').last()
 
-ultimas_sesiones = df_radar[~df_radar['Es_Descarga']].sort_values('Fecha').groupby('Ejercicio').last()
+total_t1 = len(ultimas_sesiones_t1)
+tasa_exito_t1 = 0
+if total_t1 > 0:
+    fallos_t1 = len(ultimas_sesiones_t1[ultimas_sesiones_t1['Resultado'] == '🔴 Fallo T1'])
+    tasa_exito_t1 = ((total_t1 - fallos_t1) / total_t1) * 100
 
-total_auditados = len(ultimas_sesiones)
-if total_auditados > 0:
-    fallos = len(ultimas_sesiones[ultimas_sesiones['Resultado'] == '🔴 Fallo'])
-    exitos = total_auditados - fallos
-    tasa_exito = (exitos / total_auditados) * 100
-    
-    lista_exitos = ultimas_sesiones[ultimas_sesiones['Resultado'] != '🔴 Fallo'].index.tolist()
-    lista_fallos = ultimas_sesiones[ultimas_sesiones['Resultado'] == '🔴 Fallo'].index.tolist()
+# 2. Biometría (Mediciones)
+df_med_raw['Peso_Clean'] = df_med_raw['Peso (kg)'].apply(limpiar_flotante)
+df_med_raw['Cintura_Clean'] = df_med_raw['Cintura (cm)'].apply(limpiar_flotante)
+df_med_raw['Fecha'] = pd.to_datetime(df_med_raw['Fecha'], dayfirst=True, errors='coerce')
+df_med = df_med_raw.dropna(subset=['Fecha']).sort_values('Fecha')
 
-    if tasa_exito < 60:
-        estado_snc, color_delta = "🔴 SNC FATIGADO", "inverse"
-        consejo_accionable = "Múltiples fallos detectados. Si llevas 2+ semanas fallando la misma meta, retrocede 1 salto de disco en esos ejercicios. Si vienes de una DESCARGA o inicias bloque, IGNORA ESTA ALERTA (es adaptación normal)."
-    else:
-        estado_snc, color_delta = "🟢 RECUPERACIÓN ÓPTIMA", "normal"
-        consejo_accionable = "Cumpliendo metas. Tu SNC responde bien a los descansos. Mantén la intensidad máxima."
+pesos_validos = df_med[df_med['Peso_Clean'] > 0]['Peso_Clean'].tolist()
+cinturas_validas = df_med[df_med['Cintura_Clean'] > 0]['Cintura_Clean'].tolist()
 
-    col1, col2 = st.columns(2)
-    col1.metric("Estado del Sistema Nervioso", estado_snc, delta=f"Tasa Global de Éxito: {tasa_exito:.0f}%", delta_color=color_delta)
-    col2.metric(f"Ejercicios Superando Meta", f"{exitos} de {total_auditados}")
-    
-    st.info(f"💡 **Directriz HD:** {consejo_accionable}")
+delta_peso = pesos_validos[-1] - pesos_validos[-2] if len(pesos_validos) >= 2 else 0
+delta_cintura = cinturas_validas[-1] - cinturas_validas[-2] if len(cinturas_validas) >= 2 else 0
 
-    # --- INYECCIÓN VISUAL MACRO: Notificación Global de Estancamientos ---
-    ejercicios_estancados_global = [ej for ej, info in status_map.items() if info['activo'] and info.get('estancado', False)]
-    if ejercicios_estancados_global:
-        st.error(f"⚠️ **RADAR ACTIVO:** Tienes {len(ejercicios_estancados_global)} ejercicio(s) con estancamiento crónico. Revisa las pestañas abajo para reemplazarlos.")
+# 3. Lógica del Triangulador
+tendencia_fuerza = "Baja" if tasa_exito_t1 < 60 else "Alta/Estable"
+tendencia_peso = "Sube" if delta_peso > 0.5 else ("Baja" if delta_peso < -0.5 else "Estable")
+tendencia_cintura = "Sube" if delta_cintura > 0.5 else ("Baja" if delta_cintura < -0.5 else "Estable")
 
-    with st.expander("Ver detalle general"):
-        c1, c2 = st.columns(2)
-        c1.markdown("**🟢 Cumpliendo Meta:**\n" + ("\n".join([f"- {e}" for e in lista_exitos]) if lista_exitos else "Ninguno."))
-        c2.markdown("**🔴 Fallando:**\n" + ("\n".join([f"- {e}" for e in lista_fallos]) if lista_fallos else "Ninguno."))
+if tendencia_fuerza == "Alta/Estable" and tendencia_peso == "Baja" and tendencia_cintura == "Baja":
+    diag = "🟢 RECOMPOSICIÓN PERFECTA (Quema Grasa + Retención/Ganancia Muscular)"
+    accion = "El déficit está funcionando de forma impecable. Tu fuerza bruta (Tier 1) se mantiene o sube, y estás perdiendo perímetro de cintura. NO TOQUES NADA. La tensión mecánica en aislamiento es óptima."
+elif tendencia_fuerza == "Alta/Estable" and (tendencia_peso == "Sube" or tendencia_peso == "Estable") and tendencia_cintura != "Baja":
+    diag = "🟡 SUPERÁVIT OCULTO (Falso Déficit)"
+    accion = "Tu fuerza está intacta y tu peso sube, pero tu cintura no baja. Estás comiendo más de lo que crees o quemando menos de lo que dice el reloj. ⚡ ACCIÓN: Ve al panel de Nutrición y sube el 'Stock Crítico' a 20% para forzar un déficit real."
+elif tendencia_fuerza == "Baja" and tendencia_peso == "Baja":
+    diag = "🔴 CATABOLISMO CRÍTICO (Déficit Agresivo / SNC Frito)"
+    accion = "Estás perdiendo fuerza bruta en ejercicios compuestos y perdiendo peso. Tu cuerpo está canibalizando músculo. ⚡ ACCIÓN: Exige a La Gema una 'Recarga de Carbohidratos' de 48 hrs, o aplica Excéntrica Lenta (5s) bajando 15% los pesos para proteger las articulaciones hoy."
+elif tendencia_fuerza == "Baja" and tendencia_peso == "Sube":
+    diag = "🔴 INFLAMACIÓN SISTÉMICA / SOBREENTRENAMIENTO"
+    accion = "Pierdes fuerza pero ganas peso. Esto es retención de líquidos por cortisol (estrés puro) o daño articular latente. ⚡ ACCIÓN: SEMANA DE DESCARGA OBLIGATORIA. Reduce todos los pesos al 50% para vaciar el vaso de estrés."
+else:
+    diag = "🔵 ESTADO METABÓLICO TRANSICIONAL"
+    accion = "Cuerpo estabilizando fluidos. Enfócate en los ejercicios Tier 1 y asegúrate de llegar al fallo técnico. Mide tu cintura el próximo domingo para confirmar rumbo biológico."
+
+# Render de Tarjetas del Oráculo
+st.markdown(f"**Veredicto:** {diag}")
+st.info(f"**Directriz Táctica:** {accion}")
+
+c1, c2, c3 = st.columns(3)
+c1.metric("Fuerza Tier 1 (Compuestos)", f"{tasa_exito_t1:.0f}% Éxito", delta=tendencia_fuerza, delta_color="normal" if tendencia_fuerza=="Alta/Estable" else "inverse")
+c2.metric("Tendencia Peso", f"{pesos_validos[-1] if pesos_validos else 0} kg", delta=f"{delta_peso:+.1f} kg", delta_color="inverse" if tendencia_peso=="Sube" else "normal")
+c3.metric("Tendencia Cintura", f"{cinturas_validas[-1] if cinturas_validas else 0} cm", delta=f"{delta_cintura:+.1f} cm", delta_color="inverse" if tendencia_cintura=="Sube" else "normal")
 
 st.markdown("---")
 
-# --- MOTOR DE VISTA DUAL (BIOMECÁNICA VS OPERATIVA) ---
+# --- MOTOR DE VISTA DUAL ---
 modo_vista = st.radio(
     "🔄 Selecciona el Eje de Análisis:",
     ["🔬 Por Grupo Muscular (Biomecánica)", "⚙️ Por Módulos de Entrenamiento (Operativa)"],
@@ -342,11 +319,7 @@ if modo_vista == "🔬 Por Grupo Muscular (Biomecánica)":
         
         for ej in ejercicios:
             if status_map[ej]['activo']:
-                activos_info.append({
-                    'nombre': ej, 
-                    'prox_fecha': status_map[ej]['prox_fecha'],
-                    'estancado': status_map[ej].get('estancado', False)
-                })
+                activos_info.append({'nombre': ej, 'prox_fecha': status_map[ej]['prox_fecha']})
             else:
                 inactivos_list.append(ej)
                 
@@ -357,18 +330,15 @@ if modo_vista == "🔬 Por Grupo Muscular (Biomecánica)":
             st.markdown("#### 🟢 RUTINA ACTIVA")
             for ej in vivos_ordenados:
                 prox_f = status_map[ej]['prox_fecha']
-                is_estancado = status_map[ej].get('estancado', False)
                 etiqueta_dia = f"[{prox_f.strftime('%d/%m')}]" if prox_f.year != 2099 else "[Activo]"
-                icono_alerta = "🚨" if is_estancado else ""
-                
-                st.markdown(f"##### {icono_alerta} {etiqueta_dia} {ej}")
-                render_ejercicio_bloque(ej, df_g, is_activo=True, is_estancado=is_estancado)
+                st.markdown(f"##### {etiqueta_dia} {ej}")
+                render_ejercicio_bloque(ej, df_g, is_activo=True)
                 
         if inactivos_list:
             with st.expander("⚫ HISTÓRICO / INACTIVOS (Cementerio)"):
                 for ej in inactivos_list:
                     st.markdown(f"##### {ej} (Inactivo)")
-                    render_ejercicio_bloque(ej, df_g, is_activo=False, is_estancado=False)
+                    render_ejercicio_bloque(ej, df_g, is_activo=False)
 
     with tab1: render_musculo("Pecho")
     with tab2: render_musculo("Espalda")
@@ -380,44 +350,28 @@ else:
     st.markdown("### ⚙️ AUDITORÍA POR MÓDULOS DE ENTRENAMIENTO")
     tabA, tabB = st.tabs(["🐺 Módulo Alpha", "Ω Módulo Omega"])
     
-    # Nombres normalizados POST-ETL (Exactamente como quedan después de la limpieza)
     MODULO_ALPHA = [
-        "Press con Mancuernas Plano",
-        "Remo Inclinado con Mancuernas",
-        "Press Inclinado con Mancuernas",
-        "Pájaro (Vuelos Posteriores)",
-        "Elevaciones Laterales con Mancuernas",
-        "Curl Bicep Concentrado",
-        "Extension de Triceps con Mancuernas",
-        "Shrugs (Encogimientos) Sentado", # <-- Q2 AÑADIDO
-        "Goblet Squat con Mancuerna"
+        "Press con Mancuernas Plano", "Remo Inclinado con Mancuernas", "Press Inclinado con Mancuernas",
+        "Pájaro (Vuelos Posteriores)", "Elevaciones Laterales con Mancuernas", "Curl Bicep Concentrado",
+        "Extension de Triceps con Mancuernas", "Shrugs (Encogimientos) Sentado", "Goblet Squat con Mancuerna"
     ]
     
     MODULO_OMEGA = [
-        "Remo con Barra",
-        "Press con Mancuernas Plano",
-        "Press de Hombro con Mancuernas Sentado",
-        "Remo a Una Mano con Mancuerna",
-        "Curl Bíceps Alterno con Mancuernas", # <-- Q2 REEMPLAZO
-        "Extension de Triceps con Mancuerna sobre cabeza", 
-        "Zottman Curls", # <-- Q2 REEMPLAZO
-        "Goblet Squat con Mancuerna" # <-- Q2 AÑADIDO (Reemplaza Rumano en visual Omega)
+        "Remo con Barra", "Press con Mancuernas Plano", "Press de Hombro con Mancuernas Sentado",
+        "Remo a Una Mano con Mancuerna", "Curl Bíceps Alterno con Mancuernas", 
+        "Extension de Triceps con Mancuerna sobre cabeza", "Zottman Curls", "Goblet Squat con Mancuerna"
     ]
     
     def render_modulo(lista_ejercicios):
         for ej in lista_ejercicios:
             if ej in status_map:
-                # Se filtra directamente en df_full para no perder el tracking por grupo
                 df_g = df_full[df_full['Ejercicio'] == ej]
                 is_activo = status_map[ej]['activo']
-                is_estancado = status_map[ej].get('estancado', False)
                 prox_f = status_map[ej]['prox_fecha']
                 etiqueta_dia = f"[{prox_f.strftime('%d/%m')}]" if prox_f.year != 2099 else "[Activo]"
                 estado = "🟢" if is_activo else "⚫ (Inactivo)"
-                icono_alerta = "🚨" if (is_activo and is_estancado) else ""
-                
-                st.markdown(f"##### {estado} {icono_alerta} {etiqueta_dia} {ej}")
-                render_ejercicio_bloque(ej, df_g, is_activo=is_activo, is_estancado=is_estancado)
+                st.markdown(f"##### {estado} {etiqueta_dia} {ej}")
+                render_ejercicio_bloque(ej, df_g, is_activo=is_activo)
             else:
                 st.markdown(f"##### ⏳ {ej}")
                 st.info("Sin registros históricos aún en Google Sheets para este ejercicio.")
@@ -425,21 +379,16 @@ else:
     with tabA: render_modulo(MODULO_ALPHA)
     with tabB: render_modulo(MODULO_OMEGA)
 
-    # ------------------------------------------
-    # EL CEMENTERIO DE HISTÓRICOS (Para ejercicios reemplazados)
-    # ------------------------------------------
     st.markdown("---")
     with st.expander("⚫ HISTÓRICO / INACTIVOS (Cementerio)", expanded=False):
-        st.markdown("Ejercicios que ya no están programados en el Excel a futuro, pero mantienen su registro de fuerza.")
-        
+        st.markdown("Ejercicios que ya no están programados a futuro, pero mantienen su registro de fuerza.")
         ejercicios_activos_ahora = MODULO_ALPHA + MODULO_OMEGA
         todos_los_ejercicios_bd = df_full['Ejercicio'].unique()
-        
         ejercicios_inactivos = [ej for ej in todos_los_ejercicios_bd if ej not in ejercicios_activos_ahora]
         
         if ejercicios_inactivos:
             for ej in ejercicios_inactivos:
                 st.markdown(f"##### 🪦 {ej} (Inactivo)")
-                render_ejercicio_bloque(ej, df_full[df_full['Ejercicio'] == ej], is_activo=False, is_estancado=False)
+                render_ejercicio_bloque(ej, df_full[df_full['Ejercicio'] == ej], is_activo=False)
         else:
             st.success("No hay ejercicios inactivos en el sistema.")
