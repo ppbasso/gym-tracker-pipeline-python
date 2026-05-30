@@ -53,6 +53,12 @@ fecha_formateada = f"{nombre_dia} {hoy_str_corto}"
 
 # --- ETL NUTRICIÓN ---
 df_nut['Fecha_Real'] = pd.to_datetime(df_nut['Fecha'], format='%d/%m/%Y %H:%M', errors='coerce')
+
+# --- INYECCIÓN APROBADA: Escudo purificador anti-filas huérfanas o corruptas ---
+# Elimina de la memoria temporal de Streamlit cualquier fila que no tenga una fecha válida en la Columna A.
+# Previene crashes fatales si se inyectan datos manuales mal formateados o rotos por la latencia.
+df_nut = df_nut.dropna(subset=['Fecha_Real']).copy()
+
 df_nut['Solo_Fecha'] = df_nut['Fecha_Real'].dt.strftime('%d/%m/%Y')
 
 for col in ['Calorías', 'Proteínas', 'Grasas', 'Carbohidratos']:
@@ -316,7 +322,8 @@ else:
 
 st.markdown("---")
 with st.expander("📝 Registro Forense Crudo (Últimos Platos Sin Penalizar)", expanded=False):
-    df_auditoria = df_nut[df_nut['Calorías'] > 0].sort_values(by='Fecha_Real', ascending=False).head(15)
+    # --- INYECCIÓN APROBADA: Retiramos el filtro > 0 para hacer visibles los registros huérfanos/encolados del Sabueso ---
+    df_auditoria = df_nut.sort_values(by='Fecha_Real', ascending=False).head(15)
     if not df_auditoria.empty:
         st.dataframe(df_auditoria[['Fecha', 'Descripción', 'Calorías', 'Proteínas', 'Grasas', 'Carbohidratos']], hide_index=True, use_container_width=True)
     else:
