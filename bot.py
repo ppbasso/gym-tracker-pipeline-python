@@ -4,6 +4,7 @@ import json # <--- AÑADIDA: Para decodificar la respuesta JSON del INTA
 from functools import wraps # <--- AÑADIDA: Para crear el guardia de seguridad (Decorador)
 from datetime import datetime, timedelta, time as dt_time # <--- AÑADIDA: time as dt_time para las alarmas
 import time # <--- AÑADIDA: Control de concurrencia para evitar crashes en Render
+import asyncio # <--- INYECCIÓN APROBADA: Válvula de protección de RAM
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, ConversationHandler, filters, ContextTypes
 import gspread
@@ -22,6 +23,9 @@ load_dotenv()
 # ==========================================
 # Carga tu ID desde el archivo .env. Si no existe, usa 0 (nadie entra).
 ADMIN_ID = int(os.getenv("ADMIN_ID", 0))
+
+# --- INYECCIÓN APROBADA: Válvula de exclusión mutua asíncrona ---
+nutricion_lock = asyncio.Lock()
 
 def requiere_admin(func):
     """
@@ -50,7 +54,7 @@ def requiere_admin(func):
 # FASE 0.5: CENTRALIZACIÓN DE MENSAJES (DRY)
 # ==========================================
 # Centralizamos los menús aquí. Si cambias esto, impacta en todo el bot automáticamente.
-MENU_COMANDOS_CORTO = "\n\n👉 Comandos rápidos: /rutina | /posponer | /medidas | /peso | /comer | /pasos | /cola"
+MENU_COMANDOS_CORTO = "\n\n👉 Comandos rápidos: /rutina | /posponer | /medidas | /peso | /comer | /pasos | /cola | /sync"
 
 MENU_COMANDOS_LARGO = (
     "🤖 *¡Sistema de Comando Heavy Duty!*\n\n"
@@ -60,7 +64,8 @@ MENU_COMANDOS_LARGO = (
     "👉 Toca /peso para registrar únicamente tu peso corporal.\n"
     "👉 Toca /comer para registrar tus macros.\n"
     "👉 Toca /pasos para registrar tu gasto calórico (NEAT).\n"
-    "👉 Toca /cola para revisar la cola de nutricion."
+    "👉 Toca /cola para revisar la cola de nutricion.\n"
+    "👉 Toca /sync para forzar la sincronización manual de la IA."
 )
 
 
@@ -80,6 +85,7 @@ sheet_metabolismo = client.open_by_key("1oVmaWg-i4onBq9l8Nkql1mBXRUhAWO_kkH93Bda
 # Inicialización del Cerebro INTA Enjaulado
 cliente_ia = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 
+# --- INYECCIÓN APROBADA: Fallback Anti-Huérfanos en Prompt Maestro ---
 PROMPT_MAESTRO_INTA = """
 Tu única fuente de verdad es la 'Tabla de Composición Química de Alimentos Chilenos del INTA' (Universidad de Chile) y la base de datos de LATINFOODS/FAO, los cuales tienes integrados en tu memoria nativa.
 El usuario enviará un texto describiendo lo que comió. Calcula calorías y macros siguiendo estas reglas de interpretación chilena:
@@ -87,6 +93,7 @@ El usuario enviará un texto describiendo lo que comió. Calcula calorías y mac
 2. 'Media marraqueta' equivale a 1 diente (25g). 'Dos marraquetas' equivale a 4 dientes (100g).
 3. 'Un italiano' o 'un as' en contexto de calle se mapea como 'Completo Italiano Estándar' o 'As de Vacuno Italiano'.
 4. 'Plato de casino' o 'un plato' de comida casera toma la porción de referencia estándar del INTA.
+5. PROTOCOLO ANTI-HUÉRFANOS: Si el usuario ingresa una marca o producto que NO existe exactamente, TIENES PROHIBIDO fallar. DEBES buscar el alimento genérico equivalente más cercano.
 
 Si el texto ingresado no tiene relación con comida, responde exactamente: {"error": "No mapeado"}
 
@@ -893,59 +900,62 @@ async def procesar_comida_logica(update: Update, context: ContextTypes.DEFAULT_T
     else:
         reply = await context.bot.send_message(chat_id=chat_id, text="⏳ Procesando con el motor INTA...")
 
-    # Operación Google Sheets: Buscamos la fila correcta primero
-    ahora_chile = datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m/%Y %H:%M")
-    try:
-        columna_fechas = sheet_nutricion.col_values(1)
-        fechas_reales = [f for f in columna_fechas if f.strip() != ""]
-        siguiente_fila = len(fechas_reales) + 1
-    except Exception as e:
-        await reply.edit_text(f"❌ Error de base de datos: No pude leer el Excel. {e}")
-        return ConversationHandler.END
-
-    try:
-        # INTENTO AL MOTOR GOOGLE
-        response = cliente_ia.models.generate_content(
-            model='gemini-2.5-flash',
-            contents=f"{PROMPT_MAESTRO_INTA}\n\nUsuario informa: '{entrada_usuario}'",
-            config=types.GenerateContentConfig(temperature=0.0)
-        )
-        texto_limpio = response.text.replace('```json', '').replace('```', '').strip()
-        data = json.loads(texto_limpio)
-        
-        if "error" in data:
-            await reply.edit_text("❌ Alimento o porción fuera de la cobertura del INTA.")
+    # --- INYECCIÓN APROBADA: Válvula de RAM (Lock) ---
+    async with nutricion_lock:
+        # Operación Google Sheets: Buscamos la fila correcta primero
+        ahora_chile = datetime.now(ZoneInfo("America/Santiago")).strftime("%d/%m/%Y %H:%M")
+        try:
+            columna_fechas = sheet_nutricion.col_values(1)
+            fechas_reales = [f for f in columna_fechas if f.strip() != ""]
+            siguiente_fila = len(fechas_reales) + 1
+        except Exception as e:
+            await reply.edit_text(f"❌ Error de base de datos: No pude leer el Excel. {e}")
             return ConversationHandler.END
 
-        # ÉXITO IA: Guardamos todo (Fecha, Nombre, Original, Macros)
-        fila_alimentaria = [
-            ahora_chile, 
-            data['alimento_detectado'], 
-            entrada_usuario, 
-            data['calorias'], 
-            data['proteinas'], 
-            data['grasas'], 
-            data['carbohidratos']
-        ]
-        sheet_nutricion.update(values=[fila_alimentaria], range_name=f'A{siguiente_fila}:G{siguiente_fila}')
-        
-        # Mantenemos el chat a 1 sola burbuja
-        await reply.edit_text(
-            f"✅ **Mapeo INTA Exitoso**\n🔍 Detectado: {data['alimento_detectado']}\n\n"
-            f"🔥 Kcal: {data['calorias']} | 🥩 P: {data['proteinas']}g | 🥑 G: {data['grasas']}g | 🍚 C: {data['carbohidratos']}g",
-            parse_mode="Markdown"
-        )
-        
-    except Exception as e:
-        print(f"⚠️ Error IA Nutrición (Posible 503): {e}")
-        # ESCUDO ANTI-503: Caemos aquí si Google nos rechaza.
-        # Guardamos solo Fecha, Original y dejamos Macros vacíos.
-        fila_offline = [ahora_chile, "", entrada_usuario, "", "", "", ""]
         try:
-            sheet_nutricion.update(values=[fila_offline], range_name=f'A{siguiente_fila}:G{siguiente_fila}')
-            await reply.edit_text("⚠️ Mapeo offline. Tu comida está guardada en la base.\nTe notificaré cuando quede calculada.")
-        except Exception as sheet_err:
-            await reply.edit_text(f"❌ Fallo crítico absoluto. Ni IA ni Sheets respondieron: {sheet_err}")
+            # INTENTO AL MOTOR GOOGLE
+            response = cliente_ia.models.generate_content(
+                model='gemini-2.5-flash',
+                contents=f"{PROMPT_MAESTRO_INTA}\n\nUsuario informa: '{entrada_usuario}'",
+                config=types.GenerateContentConfig(temperature=0.0)
+            )
+            texto_limpio = response.text.replace('```json', '').replace('```', '').strip()
+            data = json.loads(texto_limpio)
+            
+            if "error" in data:
+                await reply.edit_text("❌ Alimento o porción fuera de la cobertura del INTA.")
+                return ConversationHandler.END
+
+            # ÉXITO IA: Guardamos todo (Fecha, Nombre, Original, Macros)
+            fila_alimentaria = [
+                ahora_chile, 
+                data['alimento_detectado'], 
+                entrada_usuario, 
+                data['calorias'], 
+                data['proteinas'], 
+                data['grasas'], 
+                data['carbohidratos']
+            ]
+            sheet_nutricion.update(values=[fila_alimentaria], range_name=f'A{siguiente_fila}:G{siguiente_fila}')
+            
+            # Mantenemos el chat a 1 sola burbuja
+            await reply.edit_text(
+                f"✅ **Mapeo INTA Exitoso**\n🔍 Detectado: {data['alimento_detectado']}\n\n"
+                f"🔥 Kcal: {data['calorias']} | 🥩 P: {data['proteinas']}g | 🥑 G: {data['grasas']}g | 🍚 C: {data['carbohidratos']}g",
+                parse_mode="Markdown"
+            )
+            
+        except Exception as e:
+            print(f"⚠️ Error IA Nutrición (Posible 503): {e}")
+            # ESCUDO ANTI-503: Caemos aquí si Google nos rechaza.
+            # Guardamos solo Fecha, Original y dejamos Macros vacíos.
+            # --- INYECCIÓN APROBADA: Fallback Anti-Huérfanos ---
+            fila_offline = [ahora_chile, "⏳ Pendiente IA", entrada_usuario, "", "", "", ""]
+            try:
+                sheet_nutricion.update(values=[fila_offline], range_name=f'A{siguiente_fila}:G{siguiente_fila}')
+                await reply.edit_text("⚠️ Mapeo offline por caída 503. Tu comida está guardada en la base.\nToca /sync más tarde para calcularla.")
+            except Exception as sheet_err:
+                await reply.edit_text(f"❌ Fallo crítico absoluto. Ni IA ni Sheets respondieron: {sheet_err}")
 
     # Limpiamos RAM
     context.user_data.pop('msg_comer_id', None)
@@ -1094,6 +1104,14 @@ async def revisar_cola(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         await msg.edit_text(f"❌ Error al auditar la cola: {e}")
 
+# --- INYECCIÓN APROBADA: Comando manual /sync ---
+@requiere_admin
+async def comando_sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Comando manual /sync para forzar barrido del sabueso."""
+    try: await update.message.delete()
+    except: pass
+    msg = await update.message.reply_text("🔄 *Iniciando Operación SYNC...*\nPurgando cola de IA y reintentando caídas 503.", parse_mode="Markdown")
+    await sabueso_nutricion(context, manual_msg=msg)
 
 # ==========================================
 # FASE 3.5: MOTOR DE TAREAS EN SEGUNDO PLANO (JOBQUEUE)
@@ -1124,30 +1142,26 @@ async def alarma_biometria(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error en alarma de biometría: {e}")
 
-
-async def sabueso_nutricion(context: ContextTypes.DEFAULT_TYPE):
-    """
-    Se ejecuta cada 10 minutos buscando filas sin macros.
-    Si encuentra una, dispara a la IA de forma invisible y notifica.
-    """
-    if not ADMIN_ID: return
+# --- INYECCIÓN APROBADA: Motor Autónomo Sabueso ---
+async def sabueso_nutricion(context: ContextTypes.DEFAULT_TYPE, manual_msg=None):
+    """Busca celdas sin macros. Si encuentra una, dispara a la IA y notifica."""
+    if not ADMIN_ID and not manual_msg: return
 
     try:
         registros = sheet_nutricion.get_all_values()
-        # Iteramos saltando el encabezado
+        pendientes_resueltos = 0
+        
         for i, fila in enumerate(registros):
             if i == 0: continue
             
             if len(fila) >= 3 and str(fila[2]).strip() != "":
                 calorias = str(fila[3]).strip() if len(fila) > 3 else ""
                 
-                # ¡ENCONTRAMOS UNA FILA ATASCADA!
                 if not calorias:
                     texto_comida = fila[2]
-                    print(f"[SABUESO] 🔍 Detectado registro offline: '{texto_comida}'. Intentando resolver...")
+                    print(f"[SABUESO] 🔍 Resolviendo offline: '{texto_comida}'...")
                     
                     try:
-                        # Golpe a la IA
                         response = cliente_ia.models.generate_content(
                             model='gemini-2.5-flash',
                             contents=f"{PROMPT_MAESTRO_INTA}\n\nUsuario informa: '{texto_comida}'",
@@ -1157,7 +1171,6 @@ async def sabueso_nutricion(context: ContextTypes.DEFAULT_TYPE):
                         data = json.loads(texto_limpio)
                         
                         if "error" not in data:
-                            # Mapeo exitoso: Escribimos celda por celda (Google Sheets usa índice 1 para filas)
                             num_fila = i + 1 
                             sheet_nutricion.update_acell(f'B{num_fila}', data['alimento_detectado'])
                             sheet_nutricion.update_acell(f'D{num_fila}', data['calorias'])
@@ -1165,22 +1178,28 @@ async def sabueso_nutricion(context: ContextTypes.DEFAULT_TYPE):
                             sheet_nutricion.update_acell(f'F{num_fila}', data['grasas'])
                             sheet_nutricion.update_acell(f'G{num_fila}', data['carbohidratos'])
                             
-                            # Dispara el push a tu teléfono
-                            msg = (f"✅ **Mapeo INTA Exitoso (Automático)**\n"
+                            pendientes_resueltos += 1
+                            msg = (f"🔄 **Sabueso Sincronizó un Plato exitosamente**\n"
                                    f"🔍 Detectado: {data['alimento_detectado']} (de '{texto_comida}')\n\n"
-                                   f"🔥 Kcal: {data['calorias']} | 🥩 P: {data['proteinas']}g | 🥑 G: {data['grasas']}g | 🍚 C: {data['carbohidratos']}g")
-                            await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
-                            print(f"[SABUESO] ✅ Resuelto y notificado: '{texto_comida}'")
+                                   f"🔥 Kcal: {data['calorias']} | 🥩 P: {data['proteinas']}g | 🥑 G: {data['grasas']}g")
                             
-                            # Break táctico: Procesamos 1 sola fila atascada por ciclo (cada 10 min) 
-                            # para no ahogar la API de Google si hay muchas juntas.
-                            break 
+                            if manual_msg:
+                                await manual_msg.edit_text(msg, parse_mode="Markdown")
+                            else:
+                                await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
+                            
+                            time.sleep(2) 
+                            if not manual_msg or pendientes_resueltos >= 3:
+                                break 
                     except Exception as ia_err:
-                        print(f"[SABUESO] ⚠️ Fallo silencioso al procesar '{texto_comida}' (Posible 503). Reintento en 10 min. Detalle: {ia_err}")
-                        break # Corta el bucle para no seguir chocando con el muro
+                        print(f"[SABUESO] Fallo: {ia_err}")
+                        if manual_msg: await manual_msg.edit_text(f"❌ Google IA no responde (503). Intenta /sync más tarde.")
+                        break 
+                        
+        if manual_msg and pendientes_resueltos == 0:
+            await manual_msg.edit_text("✅ Cola completamente vacía. Base de datos al día.")
     except Exception as e:
-        print(f"[SABUESO] ❌ Error crítico leyendo Google Sheets: {e}")
-
+        if manual_msg: await manual_msg.edit_text(f"❌ Error crítico en base de datos: {e}")
 
 async def motor_notificaciones(context: ContextTypes.DEFAULT_TYPE):
     """
@@ -1250,6 +1269,7 @@ def main():
     app.job_queue.run_repeating(motor_notificaciones, interval=3600, first=10)
     
     # 2. Sabueso de Nutrición: Corre cada 600 segs (10 minutos)
+    # --- INYECCIÓN APROBADA: Ejecución Sabueso ---
     app.job_queue.run_repeating(sabueso_nutricion, interval=600, first=30)
 
     # 3. Alarmas de Biometría (Horarios Tácticos Asimétricos)
@@ -1325,6 +1345,9 @@ def main():
 
     # 7. COMANDOS DEV Y BÁSICOS 
     app.add_handler(CommandHandler("cola", revisar_cola))
+    # --- INYECCIÓN APROBADA: Comando /sync ---
+    app.add_handler(CommandHandler("sync", comando_sync))
+    
     app.add_handler(CommandHandler("start", mostrar_ayuda))
     app.add_handler(CommandHandler("ayuda", mostrar_ayuda))
     
@@ -1336,8 +1359,6 @@ def main():
 
     # --- LÍNEA AGREGADA 2 (PARA RENDER) ---
     keep_alive()
-
-    # --- SOLUCIÓN DE FONDO PARA OVERLAP DE RENDER ---
     print("⏳ Retraso táctico de 12s para evitar colisión de despliegues en Render...")
     time.sleep(12) 
 
