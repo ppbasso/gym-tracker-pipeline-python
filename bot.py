@@ -88,7 +88,7 @@ cliente_ia = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
 # --- INYECCIÓN APROBADA: Fallback Anti-Huérfanos en Prompt Maestro ---
 PROMPT_MAESTRO_INTA = """
 Tu única fuente de verdad es la 'Tabla de Composición Química de Alimentos Chilenos del INTA' (Universidad de Chile) y la base de datos de LATINFOODS/FAO, los cuales tienes integrados en tu memoria nativa.
-El usuario enviará un texto describiendo lo que comió. Calcula calorías y macros siguiendo estas reglas de interpretación chilena:
+El usuario enviará un texto describiendo lo que comió. Calcula calorías y macros siguiendo estas reglas de interpretation chilena:
 1. 'Una marraqueta' o 'marraqueta' a secas equivale estrictamente a 2 dientes sueltos (50g totales).
 2. 'Media marraqueta' equivale a 1 diente (25g). 'Dos marraquetas' equivale a 4 dientes (100g).
 3. 'Un italiano' o 'un as' en contexto de calle se mapea como 'Completo Italiano Estándar' o 'As de Vacuno Italiano'.
@@ -915,7 +915,7 @@ async def procesar_comida_logica(update: Update, context: ContextTypes.DEFAULT_T
         try:
             # INTENTO AL MOTOR GOOGLE
             response = cliente_ia.models.generate_content(
-                model='gemini-2.5-flash',
+                model='gemini-3.5-flash', # <--- UPGRADE TÁCTICO: Modelo 2026 Estable (GA)
                 contents=f"{PROMPT_MAESTRO_INTA}\n\nUsuario informa: '{entrada_usuario}'",
                 config=types.GenerateContentConfig(temperature=0.0)
             )
@@ -946,14 +946,14 @@ async def procesar_comida_logica(update: Update, context: ContextTypes.DEFAULT_T
             )
             
         except Exception as e:
-            print(f"⚠️ Error IA Nutrición (Posible 503): {e}")
+            print(f"⚠️ Error IA Nutrición (Posible 503 o 429): {e}")
             # ESCUDO ANTI-503: Caemos aquí si Google nos rechaza.
             # Guardamos solo Fecha, Original y dejamos Macros vacíos.
             # --- INYECCIÓN APROBADA: Fallback Anti-Huérfanos ---
             fila_offline = [ahora_chile, "⏳ Pendiente IA", entrada_usuario, "", "", "", ""]
             try:
                 sheet_nutricion.update(values=[fila_offline], range_name=f'A{siguiente_fila}:G{siguiente_fila}')
-                await reply.edit_text("⚠️ Mapeo offline por caída 503. Tu comida está guardada en la base.\nToca /sync más tarde para calcularla.")
+                await reply.edit_text("⚠️ Mapeo offline por caída en la IA. Tu comida está guardada en la base.\nToca /sync más tarde para calcularla.")
             except Exception as sheet_err:
                 await reply.edit_text(f"❌ Fallo crítico absoluto. Ni IA ni Sheets respondieron: {sheet_err}")
 
@@ -1110,7 +1110,7 @@ async def comando_sync(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Comando manual /sync para forzar barrido del sabueso."""
     try: await update.message.delete()
     except: pass
-    msg = await update.message.reply_text("🔄 *Iniciando Operación SYNC...*\nPurgando cola de IA y reintentando caídas 503.", parse_mode="Markdown")
+    msg = await update.message.reply_text("🔄 *Iniciando Operación SYNC...*\nPurgando cola de IA y resolviendo huérfanos.", parse_mode="Markdown")
     await sabueso_nutricion(context, manual_msg=msg)
 
 # ==========================================
@@ -1142,7 +1142,7 @@ async def alarma_biometria(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         print(f"Error en alarma de biometría: {e}")
 
-# --- INYECCIÓN APROBADA: Motor Autónomo Sabueso ---
+# --- INYECCIÓN APROBADA: Motor Autónomo Sabueso con Evasión 429 ---
 async def sabueso_nutricion(context: ContextTypes.DEFAULT_TYPE, manual_msg=None):
     """Busca celdas sin macros. Si encuentra una, dispara a la IA y notifica."""
     if not ADMIN_ID and not manual_msg: return
@@ -1150,6 +1150,7 @@ async def sabueso_nutricion(context: ContextTypes.DEFAULT_TYPE, manual_msg=None)
     try:
         registros = sheet_nutricion.get_all_values()
         pendientes_resueltos = 0
+        hubo_error = False # Bandera de Falso Positivo de cola
         
         for i, fila in enumerate(registros):
             if i == 0: continue
@@ -1161,43 +1162,59 @@ async def sabueso_nutricion(context: ContextTypes.DEFAULT_TYPE, manual_msg=None)
                     texto_comida = fila[2]
                     print(f"[SABUESO] 🔍 Resolviendo offline: '{texto_comida}'...")
                     
-                    try:
-                        response = cliente_ia.models.generate_content(
-                            model='gemini-2.5-flash',
-                            contents=f"{PROMPT_MAESTRO_INTA}\n\nUsuario informa: '{texto_comida}'",
-                            config=types.GenerateContentConfig(temperature=0.0)
-                        )
-                        texto_limpio = response.text.replace('```json', '').replace('```', '').strip()
-                        data = json.loads(texto_limpio)
-                        
-                        if "error" not in data:
-                            num_fila = i + 1 
-                            sheet_nutricion.update_acell(f'B{num_fila}', data['alimento_detectado'])
-                            sheet_nutricion.update_acell(f'D{num_fila}', data['calorias'])
-                            sheet_nutricion.update_acell(f'E{num_fila}', data['proteinas'])
-                            sheet_nutricion.update_acell(f'F{num_fila}', data['grasas'])
-                            sheet_nutricion.update_acell(f'G{num_fila}', data['carbohidratos'])
+                    # --- BUCLE ANTI 429: Reintento por choque de límite de velocidad ---
+                    for intento in range(2): 
+                        try:
+                            response = cliente_ia.models.generate_content(
+                                model='gemini-3.5-flash', # <--- UPGRADE ESTRATÉGICO 3.5 (GA 2026)
+                                contents=f"{PROMPT_MAESTRO_INTA}\n\nUsuario informa: '{texto_comida}'",
+                                config=types.GenerateContentConfig(temperature=0.0)
+                            )
+                            texto_limpio = response.text.replace('```json', '').replace('```', '').strip()
+                            data = json.loads(texto_limpio)
                             
-                            pendientes_resueltos += 1
-                            msg = (f"🔄 **Sabueso Sincronizó un Plato exitosamente**\n"
-                                   f"🔍 Detectado: {data['alimento_detectado']} (de '{texto_comida}')\n\n"
-                                   f"🔥 Kcal: {data['calorias']} | 🥩 P: {data['proteinas']}g | 🥑 G: {data['grasas']}g")
-                            
-                            if manual_msg:
-                                await manual_msg.edit_text(msg, parse_mode="Markdown")
-                            else:
+                            if "error" not in data:
+                                num_fila = i + 1 
+                                sheet_nutricion.update_acell(f'B{num_fila}', data['alimento_detectado'])
+                                sheet_nutricion.update_acell(f'D{num_fila}', data['calorias'])
+                                sheet_nutricion.update_acell(f'E{num_fila}', data['proteinas'])
+                                sheet_nutricion.update_acell(f'F{num_fila}', data['grasas'])
+                                sheet_nutricion.update_acell(f'G{num_fila}', data['carbohidratos'])
+                                
+                                pendientes_resueltos += 1
+                                msg = (f"🔄 **Sabueso Sincronizó un Plato exitosamente**\n"
+                                       f"🔍 Detectado: {data['alimento_detectado']} (de '{texto_comida}')\n\n"
+                                       f"🔥 Kcal: {data['calorias']} | 🥩 P: {data['proteinas']}g | 🥑 G: {data['grasas']}g")
+                                
                                 await context.bot.send_message(chat_id=ADMIN_ID, text=msg, parse_mode="Markdown")
-                            
-                            time.sleep(2) 
-                            if not manual_msg or pendientes_resueltos >= 3:
-                                break 
-                    except Exception as ia_err:
-                        print(f"[SABUESO] Fallo: {ia_err}")
-                        if manual_msg: await manual_msg.edit_text(f"❌ Google IA no responde (503). Intenta /sync más tarde.")
+                                
+                                time.sleep(5) # <--- FRENO HIDRÁULICO A 5s (Protege contra el límite 429 de 15 RPM)
+                                break # Éxito: Rompe el bucle de reintento
+                                
+                        except Exception as ia_err:
+                            err_str = str(ia_err)
+                            # Si es por cuota rebasada, duerme 7 segundos y vuelve a intentar el ciclo for
+                            if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
+                                print(f"[SABUESO] ⚠️ 429 Límite de API excedido. Aplicando Backoff de 7s...")
+                                time.sleep(7)
+                                continue
+                            else:
+                                print(f"[SABUESO] Fallo Definitivo: {ia_err}")
+                                hubo_error = True 
+                                if manual_msg: await manual_msg.edit_text(f"❌ Google IA arrojó error fatal. Intenta /sync más tarde.")
+                                break # Error irrecuperable: Rompe el bucle de reintento
+                                
+                    if hubo_error:
+                        break # Si la IA colapsó de verdad, rompe el bucle de las filas y deja de escanear
+                        
+                    if not manual_msg or pendientes_resueltos >= 3:
                         break 
                         
-        if manual_msg and pendientes_resueltos == 0:
-            await manual_msg.edit_text("✅ Cola completamente vacía. Base de datos al día.")
+        if manual_msg:
+            if pendientes_resueltos == 0 and not hubo_error:
+                await manual_msg.edit_text("✅ Cola completamente vacía. Base de datos al día.")
+            elif pendientes_resueltos > 0 and not hubo_error:
+                await manual_msg.edit_text(f"✅ Operación SYNC finalizada. {pendientes_resueltos} platos resueltos en ráfaga controlada.")
     except Exception as e:
         if manual_msg: await manual_msg.edit_text(f"❌ Error crítico en base de datos: {e}")
 
