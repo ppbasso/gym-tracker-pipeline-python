@@ -306,8 +306,8 @@ df_maestro.columns = [
     'Auditoria_Semaforo', 'Notas_Originales'
 ]
 
-# Convertimos a formato CSV codificado en UTF-8 (vital para los acentos y caracteres especiales)
-csv_data = df_maestro.to_csv(index=False).encode('utf-8')
+# Convertimos a formato CSV con BOM (utf-8-sig) y separador ';' para compatibilidad nativa con Excel en español
+csv_data = df_maestro.to_csv(index=False, sep=';').encode('utf-8-sig')
 
 # Desplegamos el botón nativo de descarga
 st.download_button(
