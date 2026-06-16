@@ -136,73 +136,6 @@ def get_grupo(ej):
     return DICCIONARIO_BIOMECANICO.get(ej, "Otros")
 
 
-# --- NUEVA FUNCIÓN: INYECTOR DE PROMPT FORENSE ---
-def generar_reporte_prompt(df_real, status_map, estado_snc, consejo_accionable, pesos_validos, cinturas_validas, tasa_exito_t1):
-    peso_ini = pesos_validos[0] if pesos_validos else 0
-    peso_fin = pesos_validos[-1] if pesos_validos else 0
-    cint_ini = cinturas_validas[0] if cinturas_validas else 0
-    cint_fin = cinturas_validas[-1] if cinturas_validas else 0
-    
-    activos = [ej for ej, info in status_map.items() if info['activo']]
-    inactivos = [ej for ej, info in status_map.items() if not info['activo']]
-    
-    t1_activos = []
-    t2_activos = []
-    for ej in activos:
-        max_peso = df_real[df_real['Ejercicio'] == ej]['Peso_Real'].max()
-        if pd.isna(max_peso): max_peso = 0
-        tier = get_tier_biomecanico(ej)
-        if tier == "Tier 1 (Compuesto)":
-            t1_activos.append(f"- {ej} (Máx comprobado: {max_peso} kg)")
-        else:
-            t2_activos.append(f"- {ej} (Máx comprobado: {max_peso} kg)")
-            
-    inactivos_str = []
-    for ej in inactivos:
-        max_peso = df_real[df_real['Ejercicio'] == ej]['Peso_Real'].max()
-        if pd.isna(max_peso): max_peso = 0
-        inactivos_str.append(f"- {ej} (Máx histórico: {max_peso} kg)")
-        
-    prompt = f"""**CONTEXTO DEL SISTEMA Y REGLAS INQUEBRANTABLES**
-Eres mi Coach HD (Arquitecto de Entrenamiento de Fuerza). Mi objetivo es recomposición corporal proyectable en el tiempo, libre de lesiones.
-Tus reglas inquebrantables: 
-1. Principio Heavy Duty adaptado: Programarás 1 sola serie de trabajo efectiva por ejercicio, llevada al Fallo Técnico (no fallo muscular absoluto).
-2. Logística: Máximo 1 hora por sesión.
-3. Equipamiento: SOLO usaré mancuernas, barras, peso corporal y banco libre. PROHIBIDO recetar el uso de máquinas o poleas.
-4. Estructura: Agrupa los ejercicios en superseries antagonistas (1 Push / 1 Pull) ejecutables en la misma estación para optimizar el tiempo.
-
-**[INFORME FORENSE DE CIERRE Y MEMORIA MUSCULAR]**
-
-**1. Estado Metabólico y Biométrico Actual:**
-- Diagnóstico del Sistema: {estado_snc} ({consejo_accionable})
-- Evolución Peso: {peso_ini} kg -> {peso_fin} kg
-- Evolución Cintura: {cint_ini} cm -> {cint_fin} cm
-*Nota para el Coach:* Ajusta el volumen y la exigencia de fuerza a esta realidad biológica real.
-
-**2. Rendimiento de Fuerza Bruta (Tier 1 - Compuestos Activos):**
-- Tasa de Éxito Global en Fuerza: {tasa_exito_t1:.0f}%
-- Catálogo Biomecánico Actual y Topes Máximos (Tier 1):
-{chr(10).join(t1_activos) if t1_activos else "- Ninguno."}
-
-**3. Aislamientos y Techos Mecánicos (Tier 2 Activos):**
-- Catálogo Biomecánico Actual y Topes Máximos (Tier 2):
-{chr(10).join(t2_activos) if t2_activos else "- Ninguno."}
-
-**4. Cementerio Biomecánico (Ejercicios Inactivos / Descartados):**
-- Los siguientes ejercicios fueron descartados en algún momento por estancamiento o dolor articular. Conoce mis topes, pero EVITA volver a recetarlos a menos que cambies el estímulo/cadencia:
-{chr(10).join(inactivos_str) if inactivos_str else "- Ninguno."}
-
-**[ÓRDENES DE EJECUCIÓN PARA LA NUEVA PLANIFICACIÓN]**
-
-1. Diseña mi nueva rutina dividida en "Módulo Alpha" y "Módulo Omega".
-2. Mantén los ejercicios compuestos del Tier 1 que están funcionando, pero optimiza su orden si es necesario.
-3. Para los ejercicios donde toqué mi techo de equipamiento (revisa mis récords máximos), NO asumas que puedo subir más peso. Diseña progresiones por TEMPO (cadencias lentas) o propón variaciones mecánicas más duras con el mismo peso.
-4. Para los aislamientos (Tier 2), NO programes incrementos de peso lesivos. Propón métodos de alta intensidad (Rest-Pause, Myo-Reps) para seguir hipertrofiando con las mismas cargas comprobadas.
-5. OBLIGATORIO: Para cada ejercicio que me recetes, entrégame en la misma línea un [PLAN B] (otra variante estrictamente con mancuerna/barra/peso corporal) por si esa zona del gimnasio está ocupada.
-"""
-    return prompt
-
-
 # ==========================================
 # 3. COMPONENTES VISUALES
 # ==========================================
@@ -344,15 +277,46 @@ if total_auditados > 0:
         c1.markdown("**🟢 Cumpliendo Meta:**\n" + ("\n".join([f"- {e}" for e in lista_exitos]) if lista_exitos else "Ninguno."))
         c2.markdown("**🔴 Fallando:**\n" + ("\n".join([f"- {e}" for e in lista_fallos]) if lista_fallos else "Ninguno."))
 
-# --- INYECTOR DE INTELIGENCIA Y REPORTES (NUEVA FASE 1) ---
+# --- EXTRACTOR FORENSE (NUEVA FASE 1) ---
 st.markdown("---")
-st.subheader("🤖 COMANDO DE INTELIGENCIA (COACH HD)")
-st.markdown("Extrae la memoria muscular completa de tu base de datos para planificar el próximo macrociclo. La IA recibirá tus récords máximos, techos biomecánicos y reglas inquebrantables.")
+st.subheader("🕵️‍♂️ EXTRACTOR FORENSE (DATA WAREHOUSE)")
+st.markdown("Descarga el historial completo de tus sesiones ejecutadas. Entrégale este archivo a tu IA para que analice tendencias, estancamientos y diseñe tu próximo macrociclo basándose en datos reales, no en resúmenes estáticos.")
 
-if st.button("📋 Compilar Reporte Forense para IA", use_container_width=True):
-    reporte_generado = generar_reporte_prompt(df_real, status_map, estado_snc, consejo_accionable, pesos_validos, cinturas_validas, tasa_exito_t1)
-    st.success("✅ Radiografía compilada. Haz clic en el ícono de 'Copiar' (esquina superior derecha del bloque gris) y pégalo en el chat de tu Gema.")
-    st.code(reporte_generado, language="markdown")
+# Construimos el DataFrame Maestro para la IA
+# Seleccionamos y renombramos columnas para maximizar el entendimiento del LLM
+df_maestro = df_real.copy()
+df_maestro['Fecha'] = df_maestro['Fecha'].dt.strftime('%Y-%m-%d') # Formato universal ISO para IA
+
+# Filtramos solo las columnas de valor analítico (limpiamos ruido)
+columnas_clave = [
+    'Fecha', 'Ejercicio', 'Grupo', 'Tier', 
+    'Peso_Proyectado_Num', 'Reps_Min_Meta', 
+    'Peso_Real', 'Reps_Efectivas', 
+    'E1RM_Meta', 'E1RM', 
+    'Resultado', 'Notas'
+]
+df_maestro = df_maestro[columnas_clave]
+
+# Renombramos para que la IA no tenga que adivinar el significado de las variables
+df_maestro.columns = [
+    'Fecha', 'Ejercicio', 'Grupo_Muscular', 'Tier_Biomecanico',
+    'Peso_Meta_kg', 'Reps_Meta',
+    'Peso_Real_kg', 'Reps_Reales',
+    'E1RM_Proyectado', 'E1RM_Real',
+    'Auditoria_Semaforo', 'Notas_Originales'
+]
+
+# Convertimos a formato CSV codificado en UTF-8 (vital para los acentos y caracteres especiales)
+csv_data = df_maestro.to_csv(index=False).encode('utf-8')
+
+# Desplegamos el botón nativo de descarga
+st.download_button(
+    label="📥 Descargar CSV Maestro (Q2-2026)",
+    data=csv_data,
+    file_name="Auditoria_Historica_Q2_2026.csv",
+    mime="text/csv",
+    use_container_width=True
+)
 
 st.markdown("---")
 
