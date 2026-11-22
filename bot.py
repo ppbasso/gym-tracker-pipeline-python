@@ -564,10 +564,18 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return INGRESANDO_DATOS 
 
     calentamiento, peso, reps, observacion = [p.strip() for p in partes]
+
+    # --- PARSEO DE 1 O 2 SETS (DOBLE PROGRESIÓN) ---
+    # Cortamos el texto 'reps' usando guion (-), barra (/) o espacios como separadores.
+    # Ej: "8-9" -> ["8", "9"] | "8" -> ["8"]
+    lista_reps = [r.strip() for r in re.split(r'[-/\s]+', reps) if r.strip()]
+    reps_s1 = lista_reps[0] if len(lista_reps) >= 1 else "0"
+    reps_s2 = lista_reps[1] if len(lista_reps) >= 2 else ""
     
     # --- BLOQUEO DE CERO ORDENADO POR EL COMANDANTE ---
-    if str(reps) == "0":
-        msg_error = "⚠️ *WARNING:* No ingreses '0' en repeticiones. Intenta de nuevo:\nCalentamiento, Peso, Reps, Obs"
+    # Validamos que ni el Set 1 ni el Set 2 (si existe) sean "0"
+    if str(reps_s1) == "0" or str(reps_s2) == "0":
+        msg_error = "⚠️ *WARNING:* No ingreses '0' en repeticiones. Intenta de nuevo:\nCalentamiento, Peso, Reps (ej: 8-8), Obs"
         if context.user_data.get('main_msg_id'):
             try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=msg_error, parse_mode="Markdown")
             except: pass
@@ -588,7 +596,10 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         nueva_nota = f"Calentamiento: {calentamiento} | Peso real: {peso}kg | Obs: {observacion}"
         notas_finales = f"{obs_actual} {nueva_nota}" if obs_actual else nueva_nota
 
-        sheet.update_acell(f'E{fila}', reps)
+        # Guardamos Set 1 en Columna E y, si existe Set 2, lo guardamos en Columna F
+        sheet.update_acell(f'E{fila}', reps_s1)
+        if reps_s2:
+            sheet.update_acell(f'F{fila}', reps_s2)
         sheet.update_acell(f'I{fila}', notas_finales)
 
         # Recargamos para buscar el siguiente
@@ -601,8 +612,10 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(registros) >= fila:
             while len(registros[fila - 1]) <= 8:
                 registros[fila - 1].append("")
-            registros[fila - 1][4] = str(reps)
-            registros[fila - 1][8] = notas_finales
+            registros[fila - 1][4] = str(reps_s1) # Índice 4 = Columna E (S1)
+            if reps_s2:
+                registros[fila - 1][5] = str(reps_s2) # Índice 5 = Columna F (S2)
+            registros[fila - 1][8] = notas_finales # Índice 8 = Columna I (Notas)
 
         siguiente_idx = None
         
@@ -682,7 +695,10 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         cal_str = m_cal.group(1).strip() if m_cal else ""
                         str_cal = f" 🔥 {cal_str}" if cal_str and cal_str.lower() not in ["0", "none", "", "no"] else ""
                         
-                        sumario += f"✅ {ej_a} 1x{reps_r} {peso_str}kg{str_cal}\n"
+                        # Si la Columna F (índice 5, S2) tiene dato distinto de vacío o "0", mostramos 2xS1-S2
+                        reps_s2_r = f[5].strip() if len(f) > 5 and f[5].strip() not in ["", "0"] else ""
+                        bloque_series = f"2x{reps_r}-{reps_s2_r}" if reps_s2_r else f"1x{reps_r}"
+                        sumario += f"✅ {ej_a} {bloque_series} {peso_str}kg{str_cal}\n"
 
             if context.user_data.get('main_msg_id'):
                 await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=sumario, parse_mode="Markdown")
