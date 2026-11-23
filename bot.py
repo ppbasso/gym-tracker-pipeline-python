@@ -174,7 +174,8 @@ def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
                 
     if ultimo_registro:
         fecha_valida = ultimo_registro[0][:5] 
-        reps = ultimo_registro[4] if len(ultimo_registro) > 4 and ultimo_registro[4].strip() else "0"
+        reps = ultimo_registro[4].strip() if len(ultimo_registro) > 4 and ultimo_registro[4].strip() else "0"
+        reps_s2 = ultimo_registro[5].strip() if len(ultimo_registro) > 5 and ultimo_registro[5].strip() not in ["", "0"] else ""
         peso_proy = ultimo_registro[7] if len(ultimo_registro) > 7 else "0"
         nota = ultimo_registro[8] if len(ultimo_registro) > 8 else ""
         
@@ -183,8 +184,9 @@ def get_ultimo_registro_valido(registros, target_ejercicio, current_date_str):
         if float(peso_real).is_integer():
             peso_real = int(peso_real)
             
-        # FORMATO MINIMALISTA V2.0
-        return f"\n🕰️ Últ.({fecha_valida}): {reps} reps x {peso_real} kg"
+        # FORMATO MINIMALISTA V2.0 (Soporta 1 o 2 series: S1 en Col E y S2 en Col F)
+        series_str = f"2x{reps}-{reps_s2}" if reps_s2 else f"{reps} reps"
+        return f"\n🕰️ Últ.({fecha_valida}): {series_str} x {peso_real} kg"
     
     return "" 
 
@@ -531,7 +533,7 @@ async def boton_tocado(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"🎯 {meta_reps} | {meta_peso}\n"
         f"📝 {nota_plan}{historial_str}{warmup_str}{up_next_str}\n"
         "✍️ Ingresar o /cancelar:\n"
-        "Calentamiento, Peso, Reps, Obs"
+        "Calentamiento, Peso, S1, S2, Obs"
     )
     await query.edit_message_text(mensaje, parse_mode="Markdown")
     
@@ -554,28 +556,23 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 'tiempo_inicio' not in context.user_data:
         context.user_data['tiempo_inicio'] = datetime.now(ZoneInfo("America/Santiago"))
 
-    partes = texto.split(",", 3) 
-    
-    if len(partes) != 4:
-        msg_error = "❌ Formato incorrecto. Necesito 4 datos separados por comas.\nEj: 0, 30, 10, ok"
+    # Cortamos exactamente en las 4 primeras comas para recibir 5 datos separados por coma:
+    # Calentamiento, Peso, S1, S2, Obs (ej: 0, 26, 8, 8, ok)
+    partes = texto.split(",", 4)
+
+    if len(partes) != 5:
+        msg_error = "❌ Formato incorrecto. Necesito 5 datos separados por comas:\nCalentamiento, Peso, S1, S2, Obs\nEj: 0, 26, 8, 8, ok"
         if context.user_data.get('main_msg_id'):
             try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=msg_error)
             except: pass
-        return INGRESANDO_DATOS 
+        return INGRESANDO_DATOS
 
-    calentamiento, peso, reps, observacion = [p.strip() for p in partes]
-
-    # --- PARSEO DE 1 O 2 SETS (DOBLE PROGRESIÓN) ---
-    # Cortamos el texto 'reps' usando guion (-), barra (/) o espacios como separadores.
-    # Ej: "8-9" -> ["8", "9"] | "8" -> ["8"]
-    lista_reps = [r.strip() for r in re.split(r'[-/\s]+', reps) if r.strip()]
-    reps_s1 = lista_reps[0] if len(lista_reps) >= 1 else "0"
-    reps_s2 = lista_reps[1] if len(lista_reps) >= 2 else ""
+    calentamiento, peso, reps_s1, reps_s2, observacion = [p.strip() for p in partes]
     
     # --- BLOQUEO DE CERO ORDENADO POR EL COMANDANTE ---
-    # Validamos que ni el Set 1 ni el Set 2 (si existe) sean "0"
+    # Validamos que ni el Set 1 ni el Set 2 sean "0"
     if str(reps_s1) == "0" or str(reps_s2) == "0":
-        msg_error = "⚠️ *WARNING:* No ingreses '0' en repeticiones. Intenta de nuevo:\nCalentamiento, Peso, Reps (ej: 8-8), Obs"
+        msg_error = "⚠️ *WARNING:* No ingreses '0' en repeticiones. Intenta de nuevo:\nCalentamiento, Peso, S1, S2, Obs"
         if context.user_data.get('main_msg_id'):
             try: await context.bot.edit_message_text(chat_id=chat_id, message_id=context.user_data['main_msg_id'], text=msg_error, parse_mode="Markdown")
             except: pass
@@ -661,7 +658,7 @@ async def procesar_datos(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🎯 {meta_reps} | {meta_peso}\n"
                 f"📝 {nota_plan}{historial_str}{warmup_str}{up_next_str}\n"
                 "✍️ Ingresar o /cancelar:\n"
-                "Calentamiento, Peso, Reps, Obs"
+                "Calentamiento, Peso, S1, S2, Obs"
             )
             
             if context.user_data.get('main_msg_id'):
